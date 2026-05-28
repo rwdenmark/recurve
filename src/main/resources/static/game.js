@@ -687,13 +687,10 @@ function onKeyDown(event) {
     return;
   }
 
-  if (!state.running) {
-    if (MOVE_KEYS[event.code] || SHOOT_KEYS[event.code]) {
-      start();
-      event.preventDefault();
-    }
-    return;
-  }
+  // While stopped (initial load or after game over) the only way to start a
+  // run is the Start button. Keyboard presses do nothing — the name input is
+  // already exempted above so the player can still type their name into it.
+  if (!state.running) return;
 
   // While the move tween is mid-flight, ignore new movement presses.
   if (state.player.moving && MOVE_KEYS[event.code]) {
