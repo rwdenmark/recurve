@@ -1,0 +1,41 @@
+package com.rangersurvivor.controller;
+
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.web.bind.annotation.CrossOrigin;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+
+/**
+ * Liveness probe for the portfolio's Live Demo failover. Returns 200 immediately so the
+ * check stays fast, and asynchronously runs SELECT 1 to wake the Neon database (which
+ * auto-suspends on the free tier) before the visitor lands on the app. CORS is opened to
+ * the portfolio origin and the Tailscale Funnel host so the probe can read the status.
+ */
+@RestController
+public class HealthController {
+
+    private final JdbcTemplate jdbcTemplate;
+
+    public HealthController(JdbcTemplate jdbcTemplate) {
+        this.jdbcTemplate = jdbcTemplate;
+    }
+
+    @CrossOrigin(origins = {
+            "https://rwdenmark.github.io",
+            "https://rdenmark.savannah-luma.ts.net"
+    })
+    @GetMapping("/api/health")
+    public Map<String, String> health() {
+        CompletableFuture.runAsync(() -> {
+            try {
+                jdbcTemplate.queryForObject("SELECT 1", Integer.class);
+            } catch (Exception ignored) {
+                // Warm-up is best-effort. Never fail the health response because of it.
+            }
+        });
+        return Map.of("status", "ok");
+    }
+}
