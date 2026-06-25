@@ -9,10 +9,11 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 /**
- * Liveness probe for the portfolio's Live Demo failover. Returns 200 immediately so the
- * check stays fast, and asynchronously runs SELECT 1 to wake the Neon database (which
- * auto-suspends on the free tier) before the visitor lands on the app. CORS is opened to
- * the portfolio origin and the Tailscale Funnel host so the probe can read the status.
+ * Liveness probe. Backs both Render's health check (render.yaml) and the portfolio's
+ * Live Demo failover. Returns 200 immediately so the check stays fast, and asynchronously
+ * runs SELECT 1 to wake the Neon database (which auto-suspends on the free tier) before the
+ * visitor lands on the app. CORS is opened to the portfolio origin and the Tailscale Funnel
+ * host so the probe can read the status.
  */
 @RestController
 public class HealthController {

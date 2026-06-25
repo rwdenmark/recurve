@@ -1,0 +1,12 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="RangerSurvivorApplication" type="SpringBootApplicationConfigurationType" factoryName="Spring Boot" nameIsGenerated="true">
+    <option name="FRAME_DEACTIVATION_UPDATE_POLICY" value="UpdateClassesAndResources" />
+    <module name="ranger-survivor" />
+    <option name="SPRING_BOOT_MAIN_CLASS" value="com.rangersurvivor.RangerSurvivorApplication" />
+    <!-- Silences the Tomcat JNI "restricted method in java.lang.System" warning on newer JDKs. -->
+    <option name="VM_PARAMETERS" value="--enable-native-access=ALL-UNNAMED" />
+    <method v="2">
+      <option name="Make" enabled="true" />
+    </method>
+  </configuration>
+</component>

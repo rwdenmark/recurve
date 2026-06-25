@@ -22,31 +22,70 @@ html, body {
 .hud {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 12px;
-  padding: 10px 16px;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 14px 22px;
   background: var(--panel);
   border-bottom: 1px solid #25262c;
+}
+
+.hud-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.hearts {
+  display: inline-flex;
+  gap: 4px;
+  font-size: 26px;
+  line-height: 1;
+}
+
+.heart.full { color: #e0414e; }
+.heart.empty { color: var(--muted); }
+
+.hud-sound {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sound-btn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 20px;
+  line-height: 1;
+  padding: 0;
+  filter: grayscale(1);
+}
+.sound-btn:hover { filter: none; }
+
+.volume-slider {
+  width: 90px;
+  accent-color: var(--accent);
+  cursor: pointer;
 }
 
 .hud-label {
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.1em;
-  font-size: 11px;
+  font-size: 16px;
 }
 
 .hud-value {
-  font-size: 16px;
+  font-size: 28px;
   color: var(--accent);
   font-variant-numeric: tabular-nums;
 }
 
 .hud-divider {
   width: 1px;
-  height: 18px;
+  height: 28px;
   background: #25262c;
-  margin: 0 4px;
+  margin: 0 6px;
 }
 
 .stage {
@@ -83,6 +122,16 @@ html, body {
   display: none;
 }
 
+/* Menu content, scaled to 150% to match the enlarged game. The dark backdrop
+   stays on .overlay (full canvas); only this inner content scales. */
+.overlay-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  transform: scale(1.5);
+  transform-origin: center;
+}
+
 .overlay h1 {
   margin: 0 0 8px;
   font-size: 24px;
@@ -110,12 +159,99 @@ html, body {
   filter: brightness(1.1);
 }
 
+/* Character selection (one clickable card per archer). */
+.char-select {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  margin: 0 0 16px;
+}
+
+.char-card {
+  image-rendering: pixelated;
+  background: #1d1f25;
+  border: 2px solid #2c2e34;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.char-card:hover { border-color: var(--muted); }
+.char-card.selected { border-color: var(--accent); }
+
+/* Upgrade-card overlay shown every 15 kills. */
+.buff-overlay {
+  position: absolute;
+  inset: 32px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(12, 13, 16, 0.92);
+  border: 1px solid #25262c;
+}
+.buff-overlay.hidden { display: none; }
+
+.buff-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  transform: scale(1.5);
+  transform-origin: center;
+}
+
+.buff-cards {
+  display: flex;
+  gap: 14px;
+}
+
+.buff-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 130px;
+  padding: 16px 12px;
+  background: #1d1f25;
+  border: 2px solid #2c2e34;
+  border-radius: 8px;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  text-align: center;
+}
+.buff-card:hover {
+  border-color: var(--accent);
+  background: #23262d;
+}
+
+.buff-title {
+  font-size: 14px;
+  font-weight: bold;
+  color: var(--accent);
+}
+.buff-desc {
+  font-size: 11px;
+  color: var(--muted);
+  min-height: 26px;
+}
+.buff-stat {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.buff-now { color: var(--muted); }
+.buff-arrow { color: var(--accent); }
+.buff-after { color: var(--text); font-weight: bold; }
+
 /* Score-submission form on the game-over screen. */
 .score-form {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin: 0 0 16px;
+  /* Space above separates it from the Start button; tight below so the
+     leaderboard sits closer. Only shows on the death screen. */
+  margin: 20px 0 4px;
 }
 
 .score-form.hidden {

@@ -16,6 +16,11 @@ spring:
       hibernate:
         format_sql: true
 
+  # Dev uses the in-memory H2 schema Hibernate builds on boot. Flyway owns the
+  # prod (Postgres) schema only, so it stays off here.
+  flyway:
+    enabled: false
+
   h2:
     console:
       enabled: true
@@ -40,9 +45,15 @@ spring:
     password: ${DATABASE_PASSWORD}
     driver-class-name: org.postgresql.Driver
 
+  # Flyway owns the schema. Hibernate only validates the entity mapping against
+  # it on boot and never mutates the live database.
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
   jpa:
     hibernate:
-      ddl-auto: update
+      ddl-auto: validate
     database-platform: org.hibernate.dialect.PostgreSQLDialect
 
   h2:

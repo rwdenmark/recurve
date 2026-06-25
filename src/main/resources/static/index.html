@@ -8,30 +8,61 @@
 </head>
 <body>
   <header class="hud">
-    <span class="hud-label">Kills</span>
-    <span id="kill-count" class="hud-value">0</span>
-    <span class="hud-divider"></span>
-    <span class="hud-label">Time</span>
-    <span id="time-value" class="hud-value">0s</span>
+    <span class="hud-group hud-life">
+      <span class="hud-label">Life</span>
+      <span id="hearts" class="hearts"></span>
+    </span>
+    <span class="hud-group hud-stats">
+      <span class="hud-sound">
+        <span class="hud-label">Music</span>
+        <button id="music-mute-btn" class="sound-btn" type="button" title="Mute / unmute music">&#128266;</button>
+        <input id="music-slider" class="volume-slider" type="range" min="0" max="100" value="10" title="Music volume">
+      </span>
+      <span class="hud-sound">
+        <span class="hud-label">SFX</span>
+        <button id="sfx-mute-btn" class="sound-btn" type="button" title="Mute / unmute sound effects">&#128266;</button>
+        <input id="sfx-slider" class="volume-slider" type="range" min="0" max="100" value="25" title="Sound-effect volume">
+      </span>
+      <span class="hud-divider"></span>
+      <span class="hud-label">Kills</span>
+      <span id="kill-count" class="hud-value">0</span>
+      <span class="hud-divider"></span>
+      <span class="hud-label">Time</span>
+      <span id="time-value" class="hud-value">0s</span>
+    </span>
   </header>
 
   <main class="stage">
-    <canvas id="game" width="512" height="512" tabindex="0"></canvas>
+    <canvas id="game" width="1024" height="512" tabindex="0"></canvas>
     <div id="overlay" class="overlay">
-      <h1 id="overlay-title">Ranger Survivor</h1>
-      <p id="overlay-text">Move with WASD. Shoot with the arrow keys.</p>
+      <div class="overlay-content">
+        <h1 id="overlay-title">Ranger Survivor</h1>
+        <p id="overlay-text">Move with WASD. Shoot with the arrow keys.</p>
 
-      <div id="score-form" class="score-form hidden">
-        <input id="player-name" class="name-input" type="text" maxlength="24" placeholder="Enter your name" autocomplete="off">
-        <button id="submit-score-button" class="overlay-secondary">Submit score</button>
+        <div id="char-select" class="char-select">
+          <canvas class="char-card" data-archer="0" width="96" height="96" title="Select archer"></canvas>
+          <canvas class="char-card" data-archer="1" width="96" height="96" title="Select archer"></canvas>
+          <canvas class="char-card" data-archer="2" width="96" height="96" title="Select archer"></canvas>
+        </div>
+
+        <button id="overlay-button">Start</button>
+
+        <div id="score-form" class="score-form hidden">
+          <input id="player-name" class="name-input" type="text" maxlength="24" placeholder="Enter your name" autocomplete="off">
+          <button id="submit-score-button" class="overlay-secondary">Submit score</button>
+        </div>
+
+        <section id="leaderboard-section" class="leaderboard-section">
+          <h2 class="leaderboard-title">Leaderboard</h2>
+          <ol id="leaderboard-list" class="leaderboard-list"></ol>
+        </section>
       </div>
+    </div>
 
-      <button id="overlay-button">Start</button>
-
-      <section id="leaderboard-section" class="leaderboard-section">
-        <h2 class="leaderboard-title">Leaderboard</h2>
-        <ol id="leaderboard-list" class="leaderboard-list"></ol>
-      </section>
+    <div id="buff-overlay" class="buff-overlay hidden">
+      <div class="buff-content">
+        <div id="buff-cards" class="buff-cards"></div>
+      </div>
     </div>
   </main>
 

@@ -9,6 +9,4 @@ import java.util.List;
 public interface ScoreRepository extends JpaRepository<Score, Long> {
 
     List<Score> findAllByOrderByKillsDescDurationSecondsAsc(Pageable pageable);
-
-    List<Score> findAllByNameIgnoreCaseOrderBySubmittedAtDesc(String name, Pageable pageable);
 }
