@@ -5,6 +5,3 @@ target/
 .vscode/
 *.log
 HELP.md
-
-src/main/resources/static/sprites/*.png
-src/main/resources/static/audio/
