@@ -8,32 +8,35 @@
 </head>
 <body>
   <header class="hud">
-    <span class="hud-group hud-life">
-      <span class="hud-label">Life</span>
-      <span id="hearts" class="hearts"></span>
-    </span>
-    <span class="hud-group hud-stats">
-      <span class="hud-sound">
-        <span class="hud-label">Music</span>
-        <button id="music-mute-btn" class="sound-btn" type="button" title="Mute / unmute music">&#128266;</button>
-        <input id="music-slider" class="volume-slider" type="range" min="0" max="100" value="10" title="Music volume">
+    <div class="hud-inner">
+      <span class="hud-group hud-life">
+        <span class="hud-label">Life</span>
+        <span id="hearts" class="hearts"></span>
       </span>
-      <span class="hud-sound">
-        <span class="hud-label">SFX</span>
-        <button id="sfx-mute-btn" class="sound-btn" type="button" title="Mute / unmute sound effects">&#128266;</button>
-        <input id="sfx-slider" class="volume-slider" type="range" min="0" max="100" value="25" title="Sound-effect volume">
+      <span class="hud-group hud-stats">
+        <span class="hud-label">Kills</span>
+        <span id="kill-count" class="hud-value">0</span>
+        <span class="hud-divider"></span>
+        <span class="hud-label">Time</span>
+        <span id="time-value" class="hud-value">0s</span>
       </span>
-      <span class="hud-divider"></span>
-      <span class="hud-label">Kills</span>
-      <span id="kill-count" class="hud-value">0</span>
-      <span class="hud-divider"></span>
-      <span class="hud-label">Time</span>
-      <span id="time-value" class="hud-value">0s</span>
-    </span>
+      <span class="hud-group hud-sound-group">
+        <span class="hud-sound">
+          <span class="hud-label">Music</span>
+          <button id="music-mute-btn" class="sound-btn" type="button" title="Mute / unmute music">&#128266;</button>
+          <input id="music-slider" class="volume-slider" type="range" min="0" max="100" value="10" title="Music volume">
+        </span>
+        <span class="hud-sound">
+          <span class="hud-label">SFX</span>
+          <button id="sfx-mute-btn" class="sound-btn" type="button" title="Mute / unmute sound effects">&#128266;</button>
+          <input id="sfx-slider" class="volume-slider" type="range" min="0" max="100" value="25" title="Sound-effect volume">
+        </span>
+      </span>
+    </div>
   </header>
 
   <main class="stage">
-    <canvas id="game" width="1024" height="512" tabindex="0"></canvas>
+    <canvas id="game" width="1536" height="768" tabindex="0"></canvas>
     <div id="overlay" class="overlay">
       <div class="overlay-content">
         <h1 id="overlay-title">Ranger Survivor</h1>

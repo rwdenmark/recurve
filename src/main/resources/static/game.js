@@ -4,7 +4,7 @@
 // Config
 // ---------------------------------------------------------------------------
 
-const TILE_SIZE = 32;
+const TILE_SIZE = 48;
 const MAP_COLS = 32;
 const MAP_ROWS = 16;
 
@@ -21,22 +21,28 @@ const SPRITE_PATHS = {
   knight2: "sprites/knight2_anim.png", // enemy_two (bronze, axe)
   knight3: "sprites/knight3_anim.png", // enemy_three (gold, sword)
   arrow:  "sprites/arrow.png",         // projectile
-  terrain: "sprites/Terrain.png",
-  // Four 48x48 castle cells keyed out of Terrain.png; one per spawn fort.
-  castles: "sprites/castles.png",
-  // Grass tile rolled 16px on both axes so its visible edges land on tile
-  // boundaries instead of cutting through tile centers.
-  grass: "sprites/Grass_shifted.png",
+  // Single castle sprite drawn on every enemy spawn fort.
+  spawnCastle: "sprites/spawn_castle.png",
+  // Native 48x48 terrain tiles (drawn 1:1, no shift/scaling).
+  grass: "sprites/grass.png",
+  path:  "sprites/path.png",
+  water: "sprites/water.png",
+  tree:  "sprites/tree.png",
+  // Map border: side (dark edge on the right) and corner (dark inner edges,
+  // transparent inner quadrant), each rotated per position so the dark side
+  // faces into the map.
+  mountainSide: "sprites/mountain_side.png",
+  mountainCorner: "sprites/mountain_corner.png",
 };
 
 // Source rects within each sheet: (left, top, width, height).
 const SRC = {
-  // Terrain tiles, all from Terrain.png (16x16 grid of 32x32 tiles).
-  GRASS:         { sheet: "grass",   x: 0,   y: 0,   w: 32, h: 32 },
-  PATH:          { sheet: "terrain", x: 0,   y: 96,  w: 32, h: 32 },
-  MOUNTAIN:      { sheet: "terrain", x: 256, y: 256, w: 32, h: 32 },
-  TREE:          { sheet: "terrain", x: 480, y: 384, w: 32, h: 32 },
-  WATER:         { sheet: "terrain", x: 480, y: 64,  w: 32, h: 32 },
+  // Grass, path, water, and tree are native 48x48 sprites (the whole image).
+  // Mountain border tiles are drawn separately (see drawMountainBorder).
+  GRASS: { sheet: "grass", x: 0, y: 0, w: 48, h: 48 },
+  PATH:  { sheet: "path",  x: 0, y: 0, w: 48, h: 48 },
+  TREE:  { sheet: "tree",  x: 0, y: 0, w: 48, h: 48 },
+  WATER: { sheet: "water", x: 0, y: 0, w: 48, h: 48 },
 };
 
 // ---------------------------------------------------------------------------
@@ -47,7 +53,7 @@ const SRC = {
 // poses. SCALE shrinks the high-res cell down to game size.
 const ANIM_ROW = { IDLE: 0, WALK: 1, RUN: 2, ATTACK: 3, HURT: 4, DIE: 5 };
 const ANIM_FRAMES = 10;
-const ARCHER_CELL = { sheet: "archer", w: 277, h: 240, ax: 88.1, ay: 216.1, scale: 0.18 };
+const ARCHER_CELL = { sheet: "archer", w: 277, h: 240, ax: 88.1, ay: 216.1, scale: 0.27 };
 // Selectable player skins (cosmetic only). All three sheets share ARCHER_CELL's
 // geometry, so the chosen one is drop-in. selectedArcher indexes this list.
 const ARCHER_SHEETS = ["archer", "archer2", "archer3"];
@@ -57,9 +63,9 @@ function playerCell() { return { ...ARCHER_CELL, sheet: ARCHER_SHEETS[selectedAr
 // only the sheet and the horizontal anchor differ. ax is each knight's body
 // pixel-mass centroid (not the bbox center) so the body sits on the tile and the
 // weapon (spear/axe/sword) overhangs rather than pulling the body off-center.
-const KNIGHT_CELL  = { sheet: "knight",  w: 350, h: 240, ax: 141.9, ay: 235.5, scale: 0.1406 };
-const KNIGHT2_CELL = { sheet: "knight2", w: 350, h: 240, ax: 152.9, ay: 235.5, scale: 0.1406 };
-const KNIGHT3_CELL = { sheet: "knight3", w: 350, h: 240, ax: 147.4, ay: 235.5, scale: 0.1406 };
+const KNIGHT_CELL  = { sheet: "knight",  w: 350, h: 240, ax: 141.9, ay: 235.5, scale: 0.2109 };
+const KNIGHT2_CELL = { sheet: "knight2", w: 350, h: 240, ax: 152.9, ay: 235.5, scale: 0.2109 };
+const KNIGHT3_CELL = { sheet: "knight3", w: 350, h: 240, ax: 147.4, ay: 235.5, scale: 0.2109 };
 // Frame duration in ms per animation (lower = faster).
 const ANIM_FRAME_MS = { IDLE: 130, WALK: 80, RUN: 60, ATTACK: 55, HURT: 70, DIE: 90 };
 // How long the attack pose is held after firing (one full attack cycle).
@@ -100,7 +106,6 @@ function isFortAt(x, y) { return FORT_CELLS.has(fortKey(x, y)); }
 
 function tileSrc(tileId) {
   if (tileId === TILES.PATH) return SRC.PATH;
-  if (tileId === TILES.MOUNTAIN) return SRC.MOUNTAIN;
   if (tileId === TILES.TREE) return SRC.TREE;
   if (tileId === TILES.WATER) return SRC.WATER;
   return SRC.GRASS;
@@ -128,34 +133,6 @@ const SPAWN_POINTS = [
 ];
 // Mark each spawn-point tile as a fort cell so movement code can block it.
 for (const s of SPAWN_POINTS) FORT_CELLS.add(fortKey(s.x, s.y));
-
-// Castle variants in castles.png (four 48x48 cells, left to right).
-const CASTLE_CELLS = [
-  { sheet: "castles", x: 0,   y: 0, w: 48, h: 48 }, // gray, red flag
-  { sheet: "castles", x: 48,  y: 0, w: 48, h: 48 }, // red-roofed A
-  { sheet: "castles", x: 96,  y: 0, w: 48, h: 48 }, // red-roofed B
-  { sheet: "castles", x: 144, y: 0, w: 48, h: 48 }, // red-roofed C
-];
-
-// Castle variant index assigned to each spawn point (parallel to SPAWN_POINTS).
-// Reassigned each game in assignCastles(): random, but guaranteed to include at
-// least one of every variant.
-let spawnCastleIndex = [];
-function assignCastles() {
-  const n = SPAWN_POINTS.length;
-  const out = new Array(n);
-  // Seed one of each variant into distinct random slots, fill the rest randomly.
-  const slots = [...Array(n).keys()];
-  for (let i = slots.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [slots[i], slots[j]] = [slots[j], slots[i]];
-  }
-  for (let v = 0; v < CASTLE_CELLS.length && v < n; v++) out[slots[v]] = v;
-  for (let i = 0; i < n; i++) {
-    if (out[i] === undefined) out[i] = Math.floor(Math.random() * CASTLE_CELLS.length);
-  }
-  spawnCastleIndex = out;
-}
 
 const INITIAL_SPAWN_INTERVAL_MS = 3000;
 const MIN_SPAWN_INTERVAL_MS = 700;
@@ -292,11 +269,12 @@ let buffsAwarded = 0;           // how many upgrade cards have been granted
 // ---------------------------------------------------------------------------
 
 const canvas = document.getElementById("game");
-// Internal resolution tracks the tile grid (MAP_COLS x MAP_ROWS tiles). The
-// canvas is then scaled up for display so the whole game renders larger without
-// changing any game-space math. Must be set before getContext, since resizing
-// the canvas resets context state like imageSmoothingEnabled.
-const DISPLAY_SCALE = 1.5;
+// Internal resolution tracks the tile grid (MAP_COLS x MAP_ROWS) at full 48px
+// tiles, so 48px art (the spawn castle) and the high-res character sheets render
+// crisply. DISPLAY_SCALE 1.0 displays the canvas 1:1 (1536x768 on screen). Must
+// be set before getContext, since resizing the canvas resets context state like
+// imageSmoothingEnabled.
+const DISPLAY_SCALE = 1.0;
 canvas.width = MAP_COLS * TILE_SIZE;
 canvas.height = MAP_ROWS * TILE_SIZE;
 canvas.style.width = `${canvas.width * DISPLAY_SCALE}px`;
@@ -1267,18 +1245,6 @@ function drawSprite(srcDef, dx, dy, dw, dh) {
   ctx.drawImage(sheet, srcDef.x, srcDef.y, srcDef.w, srcDef.h, dx, dy, dw, dh);
 }
 
-// Draw a sprite of `size` centered on (cx, cy), rotated by `angle` radians.
-function drawSpriteRotated(srcDef, cx, cy, size, angle) {
-  if (!srcDef) return;
-  const sheet = sprites[srcDef.sheet];
-  if (!sheet) return;
-  ctx.save();
-  ctx.translate(cx, cy);
-  ctx.rotate(angle);
-  ctx.drawImage(sheet, srcDef.x, srcDef.y, srcDef.w, srcDef.h, -size / 2, -size / 2, size, size);
-  ctx.restore();
-}
-
 // ---------------------------------------------------------------------------
 // Animation helpers
 // ---------------------------------------------------------------------------
@@ -1446,11 +1412,11 @@ function renderPauseScreen() {
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.fillStyle = "#e8e8e8";
-  ctx.font = "bold 52px ui-monospace, Menlo, monospace";
-  ctx.fillText("PAUSE", canvas.width / 2, canvas.height / 2 - 16);
+  ctx.font = "bold 78px ui-monospace, Menlo, monospace";
+  ctx.fillText("PAUSE", canvas.width / 2, canvas.height / 2 - 24);
   ctx.fillStyle = "#7d8088";
-  ctx.font = "22px ui-monospace, Menlo, monospace";
-  ctx.fillText("Press esc to continue", canvas.width / 2, canvas.height / 2 + 30);
+  ctx.font = "33px ui-monospace, Menlo, monospace";
+  ctx.fillText("Press esc to continue", canvas.width / 2, canvas.height / 2 + 45);
   ctx.restore();
 }
 
@@ -1976,60 +1942,72 @@ function startPlayerDeath(now) {
 // Rendering
 // ---------------------------------------------------------------------------
 
-// Vertical shift applied to the grass texture inside each 32x32 cell so the
-// texture's visible edges align with the tile boundaries. The shift wraps:
-// the bottom (TILE_SIZE - GRASS_SHIFT_Y) rows of the source appear at the
-// top of the tile, and the top GRASS_SHIFT_Y rows appear at the bottom.
-const GRASS_SHIFT_Y = 18;
+// Draw `img` into the tile at (dx,dy), rotated clockwise by rotDeg (0/90/180/270).
+function drawTileRot(img, dx, dy, rotDeg) {
+  if (!img) return;
+  const half = TILE_SIZE / 2;
+  ctx.save();
+  ctx.translate(dx + half, dy + half);
+  ctx.rotate(rotDeg * Math.PI / 180);
+  ctx.drawImage(img, -half, -half, TILE_SIZE, TILE_SIZE);
+  ctx.restore();
+}
 
-function drawGrassTile(dx, dy) {
-  const sheet = sprites[SRC.GRASS.sheet];
-  if (!sheet) return;
-  const s = SRC.GRASS;
-  const topH = TILE_SIZE - GRASS_SHIFT_Y; // 14
-  const botH = GRASS_SHIFT_Y;             // 18
-  // Top of tile shows the BOTTOM of the source (rows TILE_SIZE-topH .. TILE_SIZE).
-  ctx.drawImage(sheet, s.x, s.y + botH,  s.w, topH, dx, dy,         s.w, topH);
-  // Bottom of tile shows the TOP of the source (rows 0 .. botH).
-  ctx.drawImage(sheet, s.x, s.y,         s.w, botH, dx, dy + topH,  s.w, botH);
+// Border mountain tiles use the side/corner sprites, rotated so the dark
+// (shadowed) edge always faces into the map. The side art has its dark edge on
+// the right; the corner art is the top-left orientation (dark inner edges facing
+// down-right, transparent inner quadrant).
+function drawMountainBorder(x, y) {
+  const left = x === 0, right = x === MAP_COLS - 1;
+  const top = y === 0, bottom = y === MAP_ROWS - 1;
+  if ((left || right) && (top || bottom)) {
+    const rot = top && left ? 0 : top && right ? 90 : bottom && right ? 180 : 270;
+    drawTileRot(sprites.mountainCorner, x * TILE_SIZE, y * TILE_SIZE, rot);
+  } else {
+    const rot = left ? 0 : top ? 90 : right ? 180 : 270;
+    drawTileRot(sprites.mountainSide, x * TILE_SIZE, y * TILE_SIZE, rot);
+  }
 }
 
 function renderTiles() {
-  // Terrain tiles are pixel art: keep crisp nearest-neighbor scaling.
+  // Tiles are pixel art: keep crisp nearest-neighbor scaling.
   ctx.imageSmoothingEnabled = false;
   for (let y = 0; y < MAP_ROWS; y++) {
     for (let x = 0; x < MAP_COLS; x++) {
       const tileId = state.tileMap[y][x];
-      if (sprites.terrain) {
-        // Grass underlay everywhere so transparent edges of overlay tiles
-        // sit on green, not black.
-        drawGrassTile(x * TILE_SIZE, y * TILE_SIZE);
-        if (tileId !== TILES.GRASS) {
-          drawSprite(tileSrc(tileId), x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
-        }
-      } else {
+      if (!sprites.grass) {
         ctx.fillStyle = fallbackColor(tileId);
         ctx.fillRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+        continue;
       }
+      // Grass underlay everywhere, then the feature tile on top.
+      drawSprite(SRC.GRASS, x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+      if (tileId === TILES.GRASS) continue;
+      if (tileId === TILES.MOUNTAIN) { drawMountainBorder(x, y); continue; }
+      drawSprite(tileSrc(tileId), x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
     }
   }
 }
 
-// Castle drawn a hair smaller than the 32x32 tile so the tile shows around it.
-const CASTLE_DRAW = 30;
+// The spawn-fort castle (spawn_castle.png) is drawn taller than the tile and
+// anchored to the tile's bottom edge, so it rises up and its top sits slightly
+// above the 48x48 fort tile.
+const SPAWN_CASTLE_W = TILE_SIZE;  // native width, drawn 1:1
+const SPAWN_CASTLE_H = 54;         // taller than the tile; the top overhangs upward
 
 function renderSpawnMarkers() {
-  if (sprites.castles && spawnCastleIndex.length === SPAWN_POINTS.length) {
-    // Castles are higher-res art shrunk into the tile; smooth the downscale so
-    // they read cleanly instead of dropping pixels with nearest-neighbor.
+  const castle = sprites.spawnCastle;
+  if (castle) {
+    // Width stays 1:1; the extra height stretches the sprite upward. Smoothing
+    // off keeps the edges hard.
     const prevSmooth = ctx.imageSmoothingEnabled;
-    ctx.imageSmoothingEnabled = true;
-    for (let i = 0; i < SPAWN_POINTS.length; i++) {
-      const p = SPAWN_POINTS[i];
-      const cell = CASTLE_CELLS[spawnCastleIndex[i]] || CASTLE_CELLS[0];
-      const cx = p.x * TILE_SIZE + TILE_SIZE / 2;
-      const cy = p.y * TILE_SIZE + TILE_SIZE / 2;
-      drawSpriteRotated(cell, cx, cy, CASTLE_DRAW, 0);
+    ctx.imageSmoothingEnabled = false;
+    const left0 = (TILE_SIZE - SPAWN_CASTLE_W) / 2;
+    for (const p of SPAWN_POINTS) {
+      const left = p.x * TILE_SIZE + left0;
+      const bottom = (p.y + 1) * TILE_SIZE;   // castle base sits on the fort tile
+      ctx.drawImage(castle, 0, 0, castle.width, castle.height,
+                    left, bottom - SPAWN_CASTLE_H, SPAWN_CASTLE_W, SPAWN_CASTLE_H);
     }
     ctx.imageSmoothingEnabled = prevSmooth;
   } else {
@@ -2042,15 +2020,15 @@ function renderSpawnMarkers() {
 
 // Arrow sprite (pointing right) drawn at this on-screen length, aspect kept.
 // Scaled down to stay proportional with the shrunken character.
-const ARROW_LEN = 24;
+const ARROW_LEN = 36;
 const ARROW_THICK = ARROW_LEN * (55 / 415);
 
 function renderProjectiles() {
-  // Smooth scaling for the vector-style arrow and characters drawn after this.
+  // Arrows draw above the player and enemies. Smooth scaling for the vector arrow.
   ctx.imageSmoothingEnabled = true;
   const arrowSheet = sprites.arrow;
-  // The player's current tile: skip drawing an arrow still sitting on it (its
-  // spawn frame) so an up/down shot doesn't flash a stub over the character.
+  // Skip an arrow sitting on the player's own tile (its spawn frame) so it does
+  // not flash a stub on the archer before it steps away.
   const ptx = state.player.moving ? state.player.toX : state.player.x;
   const pty = state.player.moving ? state.player.toY : state.player.y;
   for (const p of state.projectiles) {
@@ -2076,6 +2054,9 @@ function renderProjectiles() {
 }
 
 function renderEnemies(now) {
+  // High-res character sheets scaled down, so smooth the downscale. (Projectiles
+  // enable this too, but they now draw after the characters.)
+  ctx.imageSmoothingEnabled = true;
   for (const enemy of state.enemies) {
     const type = ENEMY_TYPES[enemy.type];
     let px, py;
@@ -2179,9 +2160,9 @@ function render(now) {
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   renderTiles();
   renderSpawnMarkers();
-  renderProjectiles();
   renderEnemies(now);
   renderPlayer(now);
+  renderProjectiles(); // above the characters, so a vertical shot's arrow never shows through the archer
   renderDamageVignette(now);
 }
 
@@ -2310,7 +2291,6 @@ function resetState() {
   state.projectiles = [];
   state.spawnIntervalMs = INITIAL_SPAWN_INTERVAL_MS;
   state.tileMap = buildStartingMap();
-  assignCastles();
 }
 
 function gameOver() {
@@ -2433,6 +2413,24 @@ playerNameInput.addEventListener("keydown", (e) => {
 });
 window.addEventListener("keydown", onKeyDown);
 window.addEventListener("keyup", onKeyUp);
+
+// Auto-pause whenever the game leaves the foreground: switching tabs, minimizing,
+// or focusing another window or app. A hidden tab suspends requestAnimationFrame,
+// so the loop stops and the world freezes, but the run clock and spawn timers are
+// derived from wall time and would otherwise jump ahead on return. Routing through
+// togglePause freezes the clock and shifts every timer forward on resume, so
+// nothing skips. The player resumes with Esc, same as a manual pause.
+//
+// visibilitychange covers tab switches and minimizing; window blur additionally
+// covers switching to another window or app while this tab stays visible. The
+// guard makes a second event a no-op if it already paused.
+function autoPauseOnLeave() {
+  if (state.running && !state.paused && !state.choosingBuff) togglePause();
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) autoPauseOnLeave();
+});
+window.addEventListener("blur", autoPauseOnLeave);
 
 refreshLeaderboard();
 renderHearts();

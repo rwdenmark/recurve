@@ -90,4 +90,33 @@ class ScoreControllerTest {
 
         verify(profanityFilter, never()).isProfane(anyString());
     }
+
+    @Test
+    void submissionsAreRateLimitedPerClient() throws Exception {
+        when(profanityFilter.isProfane(anyString())).thenReturn(false);
+        // Unique client so this test's window does not collide with other tests
+        // sharing the limiter bean (they use the default 127.0.0.1).
+        String client = "203.0.113.7";
+        for (int i = 0; i < 10; i++) {
+            mockMvc.perform(post("/api/scores")
+                            .header("X-Forwarded-For", client)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(json("ryan", 5, 60)))
+                    .andExpect(status().isOk());
+        }
+        mockMvc.perform(post("/api/scores")
+                        .header("X-Forwarded-For", client)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json("ryan", 5, 60)))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(jsonPath("$.message").value("Too many submissions. Try again shortly."));
+    }
+
+    @Test
+    void topLimitIsClampedToValidRange() throws Exception {
+        // Out-of-range limits must be clamped to 1..100, not passed straight to
+        // PageRequest, which would throw on a non-positive page size.
+        mockMvc.perform(get("/api/scores/top?limit=100000")).andExpect(status().isOk());
+        mockMvc.perform(get("/api/scores/top?limit=-5")).andExpect(status().isOk());
+    }
 }

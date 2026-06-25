@@ -16,7 +16,7 @@ A top-down tile-based survival shooter. Hold WASD to move, hold an arrow key to 
 **Frontend** is a single-page HTML5 Canvas game in plain JavaScript, served as static files from the Spring Boot backend at `/`.
 
 - Game loop driven by `requestAnimationFrame`.
-- Tile grid stored as a 2D array, rendered each frame from sprite sheets. Map generation runs BFS reachability so every fort can reach the player.
+- Tile grid stored as a 2D array, drawn each frame from 48px tile sprites (grass, path, water, tree), with the map border built from rotated mountain side and corner pieces. Map generation runs BFS reachability so every fort can reach the player.
 - Sprite-sheet animation system (idle/walk/run/attack/hurt/die) anchored per character so sprites stay put across poses.
 - Enemies path toward the player with A* on the tile grid and respect the same terrain speed multipliers the player does.
 - Music and sound effects play through the Web Audio API with separate volume controls.
@@ -61,7 +61,8 @@ ranger-survivor/
 │       ├── index.html
 │       ├── game.js
 │       ├── styles.css
-│       └── sprites/       # committed sprite sheets
+│       └── sprites/       # tile sprites + character animation sheets
 └── src/test/java/com/rangersurvivor/
-    └── ScoreControllerTest.java
+    ├── ScoreControllerTest.java
+    └── ProfanityFilterTest.java
 ```

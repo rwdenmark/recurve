@@ -18,7 +18,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 
@@ -28,8 +27,11 @@ public class ScoreController {
 
     // Plausibility gate. Enemy supply is capped by the spawn cadence (floors at
     // one every 500ms), so sustained kills can't outrun a few per second. The
-    // burst allowance absorbs an early flurry on a short run. Anything past this
-    // is a forged submission.
+    // burst allowance absorbs an early flurry on a short run. This catches naive
+    // tampering and accidental garbage, not a determined forger: the client sends
+    // its own durationSeconds, so a faked score with a matching duration still
+    // passes. That is an accepted limit for a low-stakes leaderboard with no
+    // server-side game simulation.
     private static final int MAX_KILLS_PER_SECOND = 4;
     private static final int KILL_BURST_ALLOWANCE = 15;
 
@@ -61,7 +63,6 @@ public class ScoreController {
                     .body(Map.of("message", "Name not allowed"));
         }
         Score score = new Score(submission.name(), submission.kills(), submission.durationSeconds());
-        score.setSubmittedAt(Instant.now());
         Score saved = scoreRepository.save(score);
         return ResponseEntity.ok(ScoreView.from(saved));
     }
@@ -82,7 +83,10 @@ public class ScoreController {
     private String clientKey(HttpServletRequest request) {
         String forwarded = request.getHeader("X-Forwarded-For");
         if (forwarded != null && !forwarded.isBlank()) {
-            // First hop is the originating client when behind a proxy.
+            // First hop is the originating client when behind a proxy. This header
+            // is client-settable, so a determined caller can rotate it to dodge the
+            // limit. Acceptable for a low-stakes leaderboard: the gate is meant to
+            // stop casual spamming, not a motivated attacker.
             return forwarded.split(",")[0].trim();
         }
         return request.getRemoteAddr();

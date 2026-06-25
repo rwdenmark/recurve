@@ -49,31 +49,15 @@ public class Score {
         return name;
     }
 
-    public void setName(String name) {
-        this.name = name;
-    }
-
     public int getKills() {
         return kills;
-    }
-
-    public void setKills(int kills) {
-        this.kills = kills;
     }
 
     public int getDurationSeconds() {
         return durationSeconds;
     }
 
-    public void setDurationSeconds(int durationSeconds) {
-        this.durationSeconds = durationSeconds;
-    }
-
     public Instant getSubmittedAt() {
         return submittedAt;
-    }
-
-    public void setSubmittedAt(Instant submittedAt) {
-        this.submittedAt = submittedAt;
     }
 }
