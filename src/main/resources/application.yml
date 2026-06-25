@@ -50,6 +50,10 @@ spring:
   flyway:
     enabled: true
     locations: classpath:db/migration
+    # The shared database predates Flyway (its table was created by the old
+    # ddl-auto: update). Baseline an existing non-empty schema instead of failing,
+    # marking V1 as already applied. Harmless on a fresh database.
+    baseline-on-migrate: true
 
   jpa:
     hibernate:
