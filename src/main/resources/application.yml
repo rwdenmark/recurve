@@ -27,6 +27,12 @@ spring:
 
 server:
   port: ${PORT:8080}
+  # Gzip the text assets (JS/CSS/HTML/JSON) so the first load transfers less. Audio
+  # and images are already compressed and are not in the list, so they're untouched.
+  compression:
+    enabled: true
+    mime-types: text/html,text/css,text/javascript,application/javascript,application/json,image/svg+xml
+    min-response-size: 1024
   # Root by default; set APP_BASE_PATH to serve under a subpath behind the Funnel.
   servlet:
     context-path: ${APP_BASE_PATH:}

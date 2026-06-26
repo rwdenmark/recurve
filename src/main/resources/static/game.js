@@ -233,7 +233,13 @@ let musicMode = "none";   // "menu" | "game" | "none"
 
 const menuMusic = new Audio("audio/menu.mp3");
 menuMusic.loop = true;
-const gameTracks = ["audio/game1.mp3", "audio/game2.mp3", "audio/game3.mp3"].map((src) => new Audio(src));
+// preload "none" so the ~7MB of game tracks download on Start, not at page load.
+// The menu track stays eager so it never gaps when the menu opens.
+const gameTracks = ["audio/game1.mp3", "audio/game2.mp3", "audio/game3.mp3"].map((src) => {
+  const a = new Audio(src);
+  a.preload = "none";
+  return a;
+});
 let currentGameTrack = 0;
 // Loop the in-game playlist: when one track ends, start the next.
 gameTracks.forEach((a, i) => {
