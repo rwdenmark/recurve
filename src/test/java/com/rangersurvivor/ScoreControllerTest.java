@@ -33,8 +33,7 @@ class ScoreControllerTest {
     @Autowired
     private ObjectMapper objectMapper;
 
-    // Mocked so the suite never touches the live PurgoMalum API. Each test
-    // stubs the verdict it needs.
+    // Mocked so the suite never touches the live PurgoMalum API.
     @MockBean
     private ProfanityFilter profanityFilter;
 

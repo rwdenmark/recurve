@@ -5,8 +5,8 @@ import com.rangersurvivor.model.Score;
 import java.time.Instant;
 
 /**
- * Outbound score representation. Keeps the response shape decoupled from the
- * entity so adding an internal column doesn't silently change the API.
+ * Outbound score representation. Decoupled from the entity so a new internal
+ * column doesn't silently change the API.
  */
 public record ScoreView(
         Long id,

@@ -36,23 +36,35 @@
   </header>
 
   <main class="stage">
-    <canvas id="game" width="1536" height="768" tabindex="0"></canvas>
+    <!-- Canvas size is set in game.js from the tile grid. -->
+    <canvas id="game" tabindex="0"></canvas>
     <div id="overlay" class="overlay">
       <div class="overlay-content">
-        <h1 id="overlay-title">Ranger Survivor</h1>
-        <p id="overlay-text">Move with WASD. Shoot with the arrow keys.</p>
+        <div class="overlay-main">
+          <h1 id="overlay-title">Ranger Survivor</h1>
+          <p id="overlay-text">Move with WASD. Aim with the mouse, left-click to shoot.</p>
 
-        <div id="char-select" class="char-select">
-          <canvas class="char-card" data-archer="0" width="96" height="96" title="Select archer"></canvas>
-          <canvas class="char-card" data-archer="1" width="96" height="96" title="Select archer"></canvas>
-          <canvas class="char-card" data-archer="2" width="96" height="96" title="Select archer"></canvas>
-        </div>
+          <div id="char-select" class="char-select">
+            <div class="char-option" data-archer="0" title="Select ranger">
+              <canvas class="char-card" data-archer="0" width="96" height="96"></canvas>
+              <div class="char-stats"></div>
+            </div>
+            <div class="char-option" data-archer="1" title="Select ranger">
+              <canvas class="char-card" data-archer="1" width="96" height="96"></canvas>
+              <div class="char-stats"></div>
+            </div>
+            <div class="char-option" data-archer="2" title="Select ranger">
+              <canvas class="char-card" data-archer="2" width="96" height="96"></canvas>
+              <div class="char-stats"></div>
+            </div>
+          </div>
 
-        <button id="overlay-button">Start</button>
+          <div id="score-form" class="score-form hidden">
+            <input id="player-name" class="name-input" type="text" maxlength="24" placeholder="Enter your name" autocomplete="off">
+            <button id="submit-score-button" class="overlay-secondary">Submit score</button>
+          </div>
 
-        <div id="score-form" class="score-form hidden">
-          <input id="player-name" class="name-input" type="text" maxlength="24" placeholder="Enter your name" autocomplete="off">
-          <button id="submit-score-button" class="overlay-secondary">Submit score</button>
+          <button id="overlay-button">Start</button>
         </div>
 
         <section id="leaderboard-section" class="leaderboard-section">

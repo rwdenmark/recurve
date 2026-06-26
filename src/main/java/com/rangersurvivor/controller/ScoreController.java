@@ -25,13 +25,8 @@ import java.util.Map;
 @RequestMapping("/api/scores")
 public class ScoreController {
 
-    // Plausibility gate. Enemy supply is capped by the spawn cadence (floors at
-    // one every 500ms), so sustained kills can't outrun a few per second. The
-    // burst allowance absorbs an early flurry on a short run. This catches naive
-    // tampering and accidental garbage, not a determined forger: the client sends
-    // its own durationSeconds, so a faked score with a matching duration still
-    // passes. That is an accepted limit for a low-stakes leaderboard with no
-    // server-side game simulation.
+    // Reject kills that can't be reached in the elapsed time. The client sends its
+    // own durationSeconds, so this catches casual tampering, not a determined forger.
     private static final int MAX_KILLS_PER_SECOND = 4;
     private static final int KILL_BURST_ALLOWANCE = 15;
 
@@ -83,10 +78,8 @@ public class ScoreController {
     private String clientKey(HttpServletRequest request) {
         String forwarded = request.getHeader("X-Forwarded-For");
         if (forwarded != null && !forwarded.isBlank()) {
-            // First hop is the originating client when behind a proxy. This header
-            // is client-settable, so a determined caller can rotate it to dodge the
-            // limit. Acceptable for a low-stakes leaderboard: the gate is meant to
-            // stop casual spamming, not a motivated attacker.
+            // First hop is the client behind a proxy. Client-settable, so it only
+            // stops casual spam, not a caller who rotates the header.
             return forwarded.split(",")[0].trim();
         }
         return request.getRemoteAddr();

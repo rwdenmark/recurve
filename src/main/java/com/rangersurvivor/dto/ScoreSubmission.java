@@ -6,12 +6,8 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 
 /**
- * Inbound score submission. Separate from the {@link com.rangersurvivor.model.Score}
- * entity so the wire contract and the persistence model can change independently,
- * and so the client can never set id or submittedAt.
- *
- * Absolute caps here are a first gate. The plausibility check in the controller
- * (kills must be reachable in the elapsed time) is the second.
+ * Inbound score submission. The bounds here are a first gate; the controller's
+ * plausibility check (kills reachable in the elapsed time) is the second.
  */
 public record ScoreSubmission(
         @NotBlank @Size(max = 24) String name,

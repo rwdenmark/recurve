@@ -141,13 +141,32 @@ html, body {
 }
 
 /* Menu content, scaled to 150% so it fills the 1536px canvas. The dark backdrop
-   stays on .overlay (full canvas); only this inner content scales. */
+   stays on .overlay (full canvas); this inner content is a panel card that scales.
+   Two columns: rangers and controls on the left, leaderboard on the right. */
 .overlay-content {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  justify-content: center;
+  gap: 40px;
+  background: var(--panel);
+  border: 1px solid #2c2e34;
+  border-radius: 12px;
+  padding: 22px 26px;
+  transform: scale(1.5);
+  transform-origin: center;
+}
+
+.overlay-main {
   display: flex;
   flex-direction: column;
   align-items: center;
-  transform: scale(1.5);
-  transform-origin: center;
+}
+
+/* Start button and score form span the full left column. */
+#overlay-button {
+  width: 100%;
+  margin-top: 6px;
 }
 
 .overlay h1 {
@@ -159,7 +178,7 @@ html, body {
 .overlay p {
   margin: 0 0 16px;
   color: var(--muted);
-  max-width: 360px;
+  white-space: nowrap;
 }
 
 .overlay button {
@@ -177,24 +196,66 @@ html, body {
   filter: brightness(1.1);
 }
 
-/* Character selection (one clickable card per archer). */
+/* Ranger selection: one clickable box per ranger, each with a stat panel. */
 .char-select {
   display: flex;
-  align-items: center;
+  align-items: stretch;
   justify-content: center;
   gap: 14px;
   margin: 0 0 16px;
 }
 
-.char-card {
-  image-rendering: pixelated;
+.char-option {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
   background: #1d1f25;
   border: 2px solid #2c2e34;
-  border-radius: 6px;
+  border-radius: 8px;
   cursor: pointer;
 }
-.char-card:hover { border-color: var(--muted); }
-.char-card.selected { border-color: var(--accent); }
+.char-option:hover { border-color: var(--muted); }
+.char-option.selected { border-color: var(--accent); }
+
+.char-card {
+  image-rendering: pixelated;
+}
+
+.char-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+}
+
+.stat-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 10px;
+}
+
+.stat-label {
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.pips {
+  display: inline-flex;
+  gap: 3px;
+}
+
+.pip {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1px solid var(--muted);
+}
+.pip.full { background: var(--accent); border-color: var(--accent); }
 
 /* Upgrade-card overlay shown every 15 kills. */
 .buff-overlay {
@@ -222,11 +283,13 @@ html, body {
 }
 
 .buff-card {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
+  justify-content: center;
   width: 130px;
+  min-height: 132px;
   padding: 16px 12px;
   background: #1d1f25;
   border: 2px solid #2c2e34;
@@ -242,38 +305,45 @@ html, body {
 }
 
 .buff-title {
-  font-size: 14px;
+  font-size: 15px;
   font-weight: bold;
   color: var(--accent);
 }
-.buff-desc {
-  font-size: 11px;
-  color: var(--muted);
-  min-height: 26px;
-}
-.buff-stat {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  font-variant-numeric: tabular-nums;
-}
-.buff-now { color: var(--muted); }
-.buff-arrow { color: var(--accent); }
-.buff-after { color: var(--text); font-weight: bold; }
 
-/* Score-submission form on the game-over screen. */
+/* Tally of copies held (filled) out of the cap (outlines), pinned to the card top. */
+.buff-dots {
+  position: absolute;
+  top: 8px;
+  left: 6px;
+  right: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 3px;
+}
+.buff-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  border: 1px solid var(--accent);
+}
+.buff-dot.full {
+  background: var(--accent);
+}
+
+/* Score-submission form on the game-over screen. Spans the left column. */
 .score-form {
   display: flex;
   align-items: center;
   gap: 8px;
-  /* Space above separates it from the Start button; tight below so the
-     leaderboard sits closer. Only shows on the death screen. */
-  margin: 20px 0 4px;
+  width: 100%;
+  margin: 16px 0 4px;
 }
 
+/* On the main menu the form is hidden but keeps its space, so the left column is
+   the same height as the death screen and the leaderboard spacing matches. */
 .score-form.hidden {
-  display: none;
+  visibility: hidden;
 }
 
 .name-input {
@@ -283,7 +353,8 @@ html, body {
   padding: 8px 12px;
   font: inherit;
   border-radius: 4px;
-  width: 180px;
+  flex: 1;
+  min-width: 0;
 }
 
 .name-input:focus {
@@ -301,11 +372,13 @@ html, body {
   background: rgba(245, 185, 66, 0.1) !important;
 }
 
-/* Leaderboard styling. */
+/* Leaderboard styling. Right column of the menu; the list stretches so row 10
+   lines up with the bottom of the left column (the Start button). */
 .leaderboard-section {
-  margin-top: 20px;
-  width: 100%;
-  max-width: 360px;
+  width: 320px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
 }
 
 .leaderboard-title {
@@ -322,6 +395,8 @@ html, body {
   list-style: none;
   display: flex;
   flex-direction: column;
+  flex: 1;
+  justify-content: space-between;
   gap: 2px;
 }
 
@@ -357,11 +432,4 @@ html, body {
 .leaderboard-list .duration {
   color: var(--muted);
   font-variant-numeric: tabular-nums;
-}
-
-.leaderboard-empty {
-  padding: 8px;
-  text-align: center;
-  color: var(--muted);
-  font-size: 12px;
 }

@@ -16,8 +16,7 @@ spring:
       hibernate:
         format_sql: true
 
-  # Dev uses the in-memory H2 schema Hibernate builds on boot. Flyway owns the
-  # prod (Postgres) schema only, so it stays off here.
+  # Dev uses H2 built by Hibernate ddl-auto; Flyway owns the prod schema only.
   flyway:
     enabled: false
 
@@ -28,8 +27,7 @@ spring:
 
 server:
   port: ${PORT:8080}
-  # Empty by default (root, e.g. on Render). Set APP_BASE_PATH=/ranger to serve under
-  # a subpath behind the Tailscale Funnel path mapping.
+  # Root by default; set APP_BASE_PATH to serve under a subpath behind the Funnel.
   servlet:
     context-path: ${APP_BASE_PATH:}
 
@@ -45,14 +43,11 @@ spring:
     password: ${DATABASE_PASSWORD}
     driver-class-name: org.postgresql.Driver
 
-  # Flyway owns the schema. Hibernate only validates the entity mapping against
-  # it on boot and never mutates the live database.
+  # Flyway owns the schema; Hibernate only validates the mapping (ddl-auto below).
   flyway:
     enabled: true
     locations: classpath:db/migration
-    # The shared database predates Flyway (its table was created by the old
-    # ddl-auto: update). Baseline an existing non-empty schema instead of failing,
-    # marking V1 as already applied. Harmless on a fresh database.
+    # The shared database predates Flyway, so baseline it as V1 instead of failing.
     baseline-on-migrate: true
 
   jpa:
