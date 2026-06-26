@@ -25,10 +25,13 @@ import java.util.Map;
 @RequestMapping("/api/scores")
 public class ScoreController {
 
-    // Reject kills that can't be reached in the elapsed time. The client sends its
-    // own durationSeconds, so this catches casual tampering, not a determined forger.
-    private static final int MAX_KILLS_PER_SECOND = 4;
-    private static final int KILL_BURST_ALLOWANCE = 15;
+    // Reject kills that can't be reached in the elapsed time. Enemy supply is capped
+    // by the spawn cadence (up to 8 forts every ~0.6s, so ~13/s), and the board holds
+    // at most 40 at once (the burst). These sit a little above those so a strong build
+    // isn't rejected. The client sends its own durationSeconds, so this catches casual
+    // tampering, not a determined forger.
+    private static final int MAX_KILLS_PER_SECOND = 15;
+    private static final int KILL_BURST_ALLOWANCE = 50;
 
     private final ScoreRepository scoreRepository;
     private final ProfanityFilter profanityFilter;
