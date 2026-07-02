@@ -271,8 +271,9 @@ function playMenuMusic() {
 function playGameMusic() {
   musicMode = "game";
   menuMusic.pause();
-  currentGameTrack = 0;
-  const a = gameTracks[0];
+  // Start on a random track each run so the in-game music varies between games.
+  currentGameTrack = Math.floor(Math.random() * gameTracks.length);
+  const a = gameTracks[currentGameTrack];
   a.currentTime = 0;
   a.volume = effectiveVolume();
   a.play().catch(() => {});

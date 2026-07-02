@@ -9,6 +9,13 @@ import assert from "node:assert/strict";
 
 import {
   buildStartingMap,
+  wanderingRouteToCenter,
+  PATH_MIN,
+  PATH_MAX,
+  WATER_MIN,
+  WATER_MAX,
+  TREE_MIN,
+  TREE_MAX,
   MAP_COLS,
   MAP_ROWS,
   TILES,
@@ -135,14 +142,96 @@ test("water never sits in a diagonal-only adjacency", () => {
   }
 });
 
-test("obstacle budgets stay under their caps", () => {
+test("wanderingRouteToCenter is a contiguous fort-free path ending at center", () => {
+  for (let i = 0; i < RUNS; i++) {
+    for (const s of SPAWN_POINTS) {
+      const route = wanderingRouteToCenter(s.x, s.y);
+      assert.deepEqual(route[0], [s.x, s.y], "route starts at the fort");
+      assert.deepEqual(
+        route[route.length - 1],
+        [PLAYER_START_X, PLAYER_START_Y],
+        `route from (${s.x},${s.y}) ends at center on run ${i}`,
+      );
+      for (let j = 1; j < route.length; j++) {
+        const [ax, ay] = route[j - 1];
+        const [bx, by] = route[j];
+        const step = Math.abs(ax - bx) + Math.abs(ay - by);
+        assert.equal(step, 1, `step ${j} is a single orthogonal move on run ${i}`);
+        assert.ok(bx >= 1 && bx < MAP_COLS - 1 && by >= 1 && by < MAP_ROWS - 1, "stays interior");
+        // Only the starting tile may be a fort; the route never crosses another.
+        assert.ok(!isFortAt(bx, by), `route tile (${bx},${by}) is not a fort on run ${i}`);
+      }
+    }
+  }
+});
+
+test("routes from a cardinal fort do not all follow the straight lane", () => {
+  // The top-middle fort sits directly above center. With wander enabled its route
+  // should usually leave the straight column, which is what breaks the four-lane
+  // funnel. Assert it deviates on a clear majority of runs.
+  const top = SPAWN_POINTS.find((s) => s.x === PLAYER_START_X && s.y === 1);
+  let deviated = 0;
+  for (let i = 0; i < RUNS; i++) {
+    const route = wanderingRouteToCenter(top.x, top.y);
+    if (route.some(([x]) => x !== PLAYER_START_X)) deviated++;
+  }
+  assert.ok(deviated > RUNS / 2, `expected most routes to bow off the column, got ${deviated}/${RUNS}`);
+});
+
+test("paths have no 1-tile nub hanging off a line", () => {
+  const isP = (m, x, y) => x >= 0 && x < MAP_COLS && y >= 0 && y < MAP_ROWS && m[y][x] === TILES.PATH;
+  const deg = (m, x, y) => [[1, 0], [-1, 0], [0, 1], [0, -1]].filter(([dx, dy]) => isP(m, x + dx, y + dy)).length;
   for (let i = 0; i < RUNS; i++) {
     const map = buildStartingMap();
-    // waterTarget tops out at 71 and the generator never overshoots it.
-    assert.ok(countTiles(map, TILES.WATER) <= 72, `water count within cap on run ${i}`);
-    // treeTarget tops out at 168.
-    assert.ok(countTiles(map, TILES.TREE) <= 168, `tree count within cap on run ${i}`);
-    // Some path always survives (the start block plus carved routes).
-    assert.ok(countTiles(map, TILES.PATH) >= 9, `path count plausible on run ${i}`);
+    for (let y = 1; y < MAP_ROWS - 1; y++) {
+      for (let x = 1; x < MAP_COLS - 1; x++) {
+        if (!isP(map, x, y) || isFortAt(x, y)) continue;
+        if (deg(map, x, y) !== 1) continue; // a tip
+        let nx = x, ny = y;
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) if (isP(map, x + dx, y + dy)) { nx = x + dx; ny = y + dy; }
+        // A tip is fine only if it caps a 2+ branch/line (parent degree <= 2), never a lone bump off a junction.
+        assert.ok(deg(map, nx, ny) <= 2, `1-tile nub at (${x},${y}) off a degree-${deg(map, nx, ny)} tile on run ${i}`);
+      }
+    }
+  }
+});
+
+test("any grass tile boxed in by path could not have been filled", () => {
+  // fillGrassHoles fills a 4-sided grass hole unless filling would make a 2x2 path
+  // block, so every remaining boxed hole must be exactly that unavoidable case.
+  const isP = (m, x, y) => x >= 0 && x < MAP_COLS && y >= 0 && y < MAP_ROWS && m[y][x] === TILES.PATH;
+  const deg = (m, x, y) => [[1, 0], [-1, 0], [0, 1], [0, -1]].filter(([dx, dy]) => isP(m, x + dx, y + dy)).length;
+  const fillMakes2x2 = (m, x, y) => {
+    for (const [ox, oy] of [[0, 0], [-1, 0], [0, -1], [-1, -1]]) {
+      let all = true;
+      for (const [dx, dy] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
+        const cx = x + ox + dx, cy = y + oy + dy;
+        if (cx === x && cy === y) continue;
+        if (!isP(m, cx, cy)) { all = false; break; }
+      }
+      if (all) return true;
+    }
+    return false;
+  };
+  for (let i = 0; i < RUNS; i++) {
+    const map = buildStartingMap();
+    for (let y = 1; y < MAP_ROWS - 1; y++) {
+      for (let x = 1; x < MAP_COLS - 1; x++) {
+        if (map[y][x] !== TILES.GRASS || deg(map, x, y) !== 4) continue;
+        assert.ok(fillMakes2x2(map, x, y), `fillable grass hole left at (${x},${y}) on run ${i}`);
+      }
+    }
+  }
+});
+
+test("terrain counts stay within their enforced min/max bounds", () => {
+  for (let i = 0; i < RUNS; i++) {
+    const map = buildStartingMap();
+    const path = countTiles(map, TILES.PATH);
+    const water = countTiles(map, TILES.WATER);
+    const tree = countTiles(map, TILES.TREE);
+    assert.ok(path >= PATH_MIN && path <= PATH_MAX, `path ${path} within [${PATH_MIN},${PATH_MAX}] on run ${i}`);
+    assert.ok(water >= WATER_MIN && water <= WATER_MAX, `water ${water} within [${WATER_MIN},${WATER_MAX}] on run ${i}`);
+    assert.ok(tree >= TREE_MIN && tree <= TREE_MAX, `tree ${tree} within [${TREE_MIN},${TREE_MAX}] on run ${i}`);
   }
 });
