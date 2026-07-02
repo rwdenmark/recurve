@@ -6,12 +6,15 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 
 /**
- * Inbound score submission. The bounds here are a first gate; the controller's
- * plausibility check (kills reachable in the elapsed time) is the second.
+ * Inbound score submission. The bounds here are a first gate; the controller then
+ * verifies the run against its server-timed session and the spawn model. sessionId
+ * is the id from POST /api/game/start; it's validated in the controller, not here,
+ * so a missing one yields a clean "Score rejected" rather than a bean-validation 400.
  */
 public record ScoreSubmission(
         @NotBlank @Size(max = 24) String name,
         @Min(0) @Max(100_000) int kills,
-        @Min(0) @Max(86_400) int durationSeconds
+        @Min(0) @Max(86_400) int durationSeconds,
+        String sessionId
 ) {
 }

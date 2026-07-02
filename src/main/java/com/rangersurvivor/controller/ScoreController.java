@@ -4,7 +4,9 @@ import com.rangersurvivor.dto.ScoreSubmission;
 import com.rangersurvivor.dto.ScoreView;
 import com.rangersurvivor.model.Score;
 import com.rangersurvivor.repository.ScoreRepository;
+import com.rangersurvivor.service.GameSessionService;
 import com.rangersurvivor.service.ProfanityFilter;
+import com.rangersurvivor.service.SpawnModel;
 import com.rangersurvivor.service.SubmissionRateLimiter;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
@@ -25,24 +27,26 @@ import java.util.Map;
 @RequestMapping("/api/scores")
 public class ScoreController {
 
-    // Reject kills that can't be reached in the elapsed time. Enemy supply is capped
-    // by the spawn cadence (up to 8 forts every ~0.6s, so ~13/s), and the board holds
-    // at most 40 at once (the burst). These sit a little above those so a strong build
-    // isn't rejected. The client sends its own durationSeconds, so this catches casual
-    // tampering, not a determined forger.
-    private static final int MAX_KILLS_PER_SECOND = 15;
-    private static final int KILL_BURST_ALLOWANCE = 50;
+    // Slack on the spawn-model bound: durationSeconds is floored to whole seconds and
+    // tick timing jitters, so allow a little headroom (about the size of a full board).
+    private static final int KILL_SLACK = 40;
+    // The client's run clock can start slightly before the server creates the session
+    // (request latency), so allow this much over the server-measured elapsed time.
+    private static final int CLOCK_SKEW_SECONDS = 5;
 
     private final ScoreRepository scoreRepository;
     private final ProfanityFilter profanityFilter;
     private final SubmissionRateLimiter rateLimiter;
+    private final GameSessionService sessions;
 
     public ScoreController(ScoreRepository scoreRepository,
                            ProfanityFilter profanityFilter,
-                           SubmissionRateLimiter rateLimiter) {
+                           SubmissionRateLimiter rateLimiter,
+                           GameSessionService sessions) {
         this.scoreRepository = scoreRepository;
         this.profanityFilter = profanityFilter;
         this.rateLimiter = rateLimiter;
+        this.sessions = sessions;
     }
 
     @PostMapping
@@ -52,17 +56,34 @@ public class ScoreController {
             return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
                     .body(Map.of("message", "Too many submissions. Try again shortly."));
         }
-        if (!isPlausible(submission.kills(), submission.durationSeconds())) {
-            return ResponseEntity.badRequest()
-                    .body(Map.of("message", "Score rejected"));
+        // The run must come from a real session, can't claim more time than has elapsed
+        // since it started, and can't claim more kills than the spawner could produce.
+        Long startMillis = sessions.startMillis(submission.sessionId());
+        if (startMillis == null) {
+            return rejected();
         }
+        long elapsedSeconds = (System.currentTimeMillis() - startMillis) / 1000;
+        if (submission.durationSeconds() > elapsedSeconds + CLOCK_SKEW_SECONDS) {
+            return rejected();
+        }
+        if (submission.kills() > SpawnModel.maxKills(submission.durationSeconds()) + KILL_SLACK) {
+            return rejected();
+        }
+        // Checked before consuming the session so a profane name can be fixed and resubmitted.
         if (profanityFilter.isProfane(submission.name())) {
             return ResponseEntity.badRequest()
                     .body(Map.of("message", "Name not allowed"));
         }
+        if (!sessions.consume(submission.sessionId())) {
+            return rejected(); // already submitted, or swept between the checks
+        }
         Score score = new Score(submission.name(), submission.kills(), submission.durationSeconds());
         Score saved = scoreRepository.save(score);
         return ResponseEntity.ok(ScoreView.from(saved));
+    }
+
+    private ResponseEntity<?> rejected() {
+        return ResponseEntity.badRequest().body(Map.of("message", "Score rejected"));
     }
 
     @GetMapping("/top")
@@ -72,10 +93,6 @@ public class ScoreController {
                 .stream()
                 .map(ScoreView::from)
                 .toList();
-    }
-
-    private boolean isPlausible(int kills, int durationSeconds) {
-        return kills <= (long) durationSeconds * MAX_KILLS_PER_SECOND + KILL_BURST_ALLOWANCE;
     }
 
     private String clientKey(HttpServletRequest request) {

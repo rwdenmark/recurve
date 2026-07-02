@@ -377,6 +377,8 @@ try {
 
 let lastRunDurationSeconds = 0;
 let scoreAlreadySubmitted = false;
+// Set from POST /api/game/start so the server can time the run. Sent with the score.
+let gameSessionId = null;
 
 async function refreshLeaderboard() {
   try {
@@ -431,6 +433,7 @@ async function submitScore() {
         name,
         kills: state.kills,
         durationSeconds: lastRunDurationSeconds,
+        sessionId: gameSessionId,
       }),
     });
     if (res.status === 400) {
@@ -1479,6 +1482,13 @@ function start() {
   playGameMusic();
   state.startedAt = performance.now();
   state.lastSpawnAt = state.startedAt;
+  // Open a server-timed session for this run. If it fails, the score just can't be
+  // submitted later (the leaderboard would be unreachable anyway).
+  gameSessionId = null;
+  fetch("api/game/start", { method: "POST" })
+    .then((r) => (r.ok ? r.json() : null))
+    .then((d) => { if (d) gameSessionId = d.sessionId; })
+    .catch(() => {});
   scoreForm.classList.add("hidden");
   scoreAlreadySubmitted = false;
   submitScoreButton.disabled = false;

@@ -3,6 +3,7 @@ node_modules/
 .idea/
 *.iml
 .DS_Store
+.fuse_hidden*
 .vscode/
 *.log
 HELP.md

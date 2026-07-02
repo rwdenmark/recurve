@@ -1,7 +1,9 @@
 package com.rangersurvivor;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.rangersurvivor.service.GameSessionService;
 import com.rangersurvivor.service.ProfanityFilter;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -37,15 +39,29 @@ class ScoreControllerTest {
     @MockBean
     private ProfanityFilter profanityFilter;
 
+    // Mocked so tests control the server-measured run time without waiting.
+    @MockBean
+    private GameSessionService sessions;
+
+    @BeforeEach
+    void defaults() {
+        // A session that started 10 minutes ago, so any plausible duration fits.
+        // (ProfanityFilter is left at its default mock verdict of false; profaneName
+        // stubs it true, and tests that reject earlier never reach it.)
+        when(sessions.startMillis(anyString())).thenReturn(System.currentTimeMillis() - 600_000L);
+        when(sessions.consume(anyString())).thenReturn(true);
+    }
+
     private String json(String name, int kills, int durationSeconds) throws Exception {
-        return objectMapper.writeValueAsString(
-                Map.of("name", name, "kills", kills, "durationSeconds", durationSeconds));
+        return objectMapper.writeValueAsString(Map.of(
+                "name", name,
+                "kills", kills,
+                "durationSeconds", durationSeconds,
+                "sessionId", "test-session"));
     }
 
     @Test
     void validScoreRoundTripsThroughTheTopEndpoint() throws Exception {
-        when(profanityFilter.isProfane(anyString())).thenReturn(false);
-
         mockMvc.perform(post("/api/scores")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(json("ryan", 42, 130)))
@@ -79,8 +95,33 @@ class ScoreControllerTest {
     }
 
     @Test
-    void implausibleScoreIsRejectedBeforeProfanityCheck() throws Exception {
-        // 99999 kills in 5 seconds is impossible given the spawn cadence.
+    void missingSessionIsRejectedBeforeProfanityCheck() throws Exception {
+        when(sessions.startMillis(anyString())).thenReturn(null);
+
+        mockMvc.perform(post("/api/scores")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json("ryan", 10, 60)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Score rejected"));
+
+        verify(profanityFilter, never()).isProfane(anyString());
+    }
+
+    @Test
+    void durationLongerThanTheSessionIsRejected() throws Exception {
+        // Session started 5s ago, but the run claims 130s of play.
+        when(sessions.startMillis(anyString())).thenReturn(System.currentTimeMillis() - 5_000L);
+
+        mockMvc.perform(post("/api/scores")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json("ryan", 10, 130)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Score rejected"));
+    }
+
+    @Test
+    void implausibleKillCountIsRejectedBeforeProfanityCheck() throws Exception {
+        // 99999 kills in 5 seconds is far more than the spawner could produce.
         mockMvc.perform(post("/api/scores")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(json("ryan", 99999, 5)))
@@ -92,7 +133,6 @@ class ScoreControllerTest {
 
     @Test
     void submissionsAreRateLimitedPerClient() throws Exception {
-        when(profanityFilter.isProfane(anyString())).thenReturn(false);
         // Unique client so this test's window does not collide with other tests
         // sharing the limiter bean (they use the default 127.0.0.1).
         String client = "203.0.113.7";

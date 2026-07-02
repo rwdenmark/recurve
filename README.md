@@ -23,7 +23,8 @@ A top-down tile-based survival shooter. Move with WASD, aim with the mouse and l
 
 **Backend** is a Spring Boot REST API for high scores.
 
-- `POST /api/scores` accepts `{ name, kills, durationSeconds }`. Validated, bounds-checked, rejects implausible scores, rate-limited per client, and run through a profanity filter before persisting.
+- `POST /api/game/start` opens a server-timed session and returns its id.
+- `POST /api/scores` accepts `{ name, kills, durationSeconds, sessionId }`. The server checks the session exists, that the claimed run length doesn't exceed the real elapsed time since the session started, and that the kill count is within what the spawn schedule could produce in that time (a model mirrored from the frontend, so there's no hand-tuned cap to re-tune when balance changes). Then it rate-limits per client, runs a profanity filter, and persists. The session is single-use. This stops casual tampering but isn't full anti-cheat, which would need server-side replay.
 - `GET /api/scores/top?limit=N` returns the top N scores by kills (limit clamped to 1..100).
 - `GET /api/health` is a fast liveness probe that also wakes the database.
 
