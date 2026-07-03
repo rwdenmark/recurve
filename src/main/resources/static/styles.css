@@ -372,7 +372,7 @@ html, body {
   background: rgba(245, 185, 66, 0.1) !important;
 }
 
-/* Leaderboard styling. Right column of the menu; the list stretches so row 10
+/* Leaderboard styling. Right column of the menu. The list stretches so row 10
    lines up with the bottom of the left column (the Start button). */
 .leaderboard-section {
   width: 320px;
