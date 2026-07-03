@@ -3,6 +3,7 @@ package com.rangersurvivor;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.rangersurvivor.service.GameSessionService;
 import com.rangersurvivor.service.ProfanityFilter;
+import com.rangersurvivor.service.SubmissionRateLimiter;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -43,6 +44,10 @@ class ScoreControllerTest {
     @MockBean
     private GameSessionService sessions;
 
+    // The live limiter bean, reset per test so no test inherits another's window.
+    @Autowired
+    private SubmissionRateLimiter rateLimiter;
+
     @BeforeEach
     void defaults() {
         // A session that started 10 minutes ago, so any plausible duration fits.
@@ -50,6 +55,7 @@ class ScoreControllerTest {
         // stubs it true, and tests that reject earlier never reach it.)
         when(sessions.startMillis(anyString())).thenReturn(System.currentTimeMillis() - 600_000L);
         when(sessions.consume(anyString())).thenReturn(true);
+        rateLimiter.clear();
     }
 
     private String json(String name, int kills, int durationSeconds) throws Exception {
@@ -73,6 +79,15 @@ class ScoreControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].name").value("ryan"))
                 .andExpect(jsonPath("$[0].kills").value(42));
+    }
+
+    @Test
+    void submittedNameIsTrimmedBeforeStorage() throws Exception {
+        mockMvc.perform(post("/api/scores")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json("  ryan  ", 42, 130)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value("ryan"));
     }
 
     @Test
@@ -133,8 +148,8 @@ class ScoreControllerTest {
 
     @Test
     void submissionsAreRateLimitedPerClient() throws Exception {
-        // Unique client so this test's window does not collide with other tests
-        // sharing the limiter bean (they use the default 127.0.0.1).
+        // The limiter is cleared in defaults(). The header exercises the
+        // X-Forwarded-For key path rather than the default 127.0.0.1.
         String client = "203.0.113.7";
         for (int i = 0; i < 10; i++) {
             mockMvc.perform(post("/api/scores")

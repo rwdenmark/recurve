@@ -69,15 +69,18 @@ public class ScoreController {
         if (submission.kills() > SpawnModel.maxKills(submission.durationSeconds()) + KILL_SLACK) {
             return rejected();
         }
+        // Trimmed once here so the filter and the stored row see the same name.
+        // @NotBlank already guarantees there is something left after the trim.
+        String name = submission.name().trim();
         // Checked before consuming the session so a profane name can be fixed and resubmitted.
-        if (profanityFilter.isProfane(submission.name())) {
+        if (profanityFilter.isProfane(name)) {
             return ResponseEntity.badRequest()
                     .body(Map.of("message", "Name not allowed"));
         }
         if (!sessions.consume(submission.sessionId())) {
             return rejected(); // already submitted, or swept between the checks
         }
-        Score score = new Score(submission.name(), submission.kills(), submission.durationSeconds());
+        Score score = new Score(name, submission.kills(), submission.durationSeconds());
         Score saved = scoreRepository.save(score);
         return ResponseEntity.ok(ScoreView.from(saved));
     }

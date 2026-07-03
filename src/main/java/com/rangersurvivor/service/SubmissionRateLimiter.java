@@ -15,15 +15,25 @@ import java.util.concurrent.atomic.AtomicInteger;
 @Service
 public class SubmissionRateLimiter {
 
-    private static final int MAX_PER_WINDOW = 10;
+    private static final int DEFAULT_MAX_PER_WINDOW = 10;
     private static final long WINDOW_MS = 60_000;
     private static final int SWEEP_EVERY = 500; // sweep idle clients every N calls
 
+    private final int maxPerWindow;
     private final Map<String, Deque<Long>> hits = new ConcurrentHashMap<>();
     private final AtomicInteger callsSinceSweep = new AtomicInteger();
 
+    public SubmissionRateLimiter() {
+        this(DEFAULT_MAX_PER_WINDOW);
+    }
+
+    // For callers that need their own budget, like the game-start endpoint.
+    public SubmissionRateLimiter(int maxPerWindow) {
+        this.maxPerWindow = maxPerWindow;
+    }
+
     public boolean allow(String key) {
-        long now = System.currentTimeMillis();
+        long now = nowMillis();
         if (callsSinceSweep.incrementAndGet() >= SWEEP_EVERY) {
             callsSinceSweep.set(0);
             sweepExpired(now);
@@ -33,12 +43,23 @@ public class SubmissionRateLimiter {
             while (!window.isEmpty() && now - window.peekFirst() > WINDOW_MS) {
                 window.pollFirst();
             }
-            if (window.size() >= MAX_PER_WINDOW) {
+            if (window.size() >= maxPerWindow) {
                 return false;
             }
             window.addLast(now);
             return true;
         }
+    }
+
+    // Clock seam so tests can drive the window without sleeping.
+    protected long nowMillis() {
+        return System.currentTimeMillis();
+    }
+
+    /** Drop every tracked window. For tests. */
+    public void clear() {
+        hits.clear();
+        callsSinceSweep.set(0);
     }
 
     // Drop clients whose window has fully aged out. The key is removed only if still

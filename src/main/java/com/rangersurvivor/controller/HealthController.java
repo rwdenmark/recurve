@@ -7,6 +7,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Liveness probe for platform health checks and the demo failover.
@@ -19,6 +20,10 @@ public class HealthController {
 
     private final JdbcTemplate jdbcTemplate;
 
+    // One warm-up at a time. Uptime monitors poll on a timer, and a slow database
+    // wake must not stack blocking tasks on the common pool.
+    private final AtomicBoolean warmupInFlight = new AtomicBoolean();
+
     public HealthController(JdbcTemplate jdbcTemplate) {
         this.jdbcTemplate = jdbcTemplate;
     }
@@ -29,13 +34,17 @@ public class HealthController {
     })
     @GetMapping("/api/health")
     public Map<String, String> health() {
-        CompletableFuture.runAsync(() -> {
-            try {
-                jdbcTemplate.queryForObject("SELECT 1", Integer.class);
-            } catch (Exception ignored) {
-                // Warm-up is best-effort. Never fail the health response because of it.
-            }
-        });
+        if (warmupInFlight.compareAndSet(false, true)) {
+            CompletableFuture.runAsync(() -> {
+                try {
+                    jdbcTemplate.queryForObject("SELECT 1", Integer.class);
+                } catch (Exception ignored) {
+                    // Warm-up is best-effort. Never fail the health response because of it.
+                } finally {
+                    warmupInFlight.set(false);
+                }
+            });
+        }
         return Map.of("status", "ok");
     }
 }

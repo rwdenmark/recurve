@@ -1,5 +1,7 @@
 package com.rangersurvivor.service;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
@@ -22,6 +24,8 @@ import java.util.Map;
  */
 @Service
 public class ProfanityFilter {
+
+    private static final Logger log = LoggerFactory.getLogger(ProfanityFilter.class);
 
     private static final String CONTAINS_URL =
             "https://www.purgomalum.com/service/containsprofanity?text=";
@@ -70,6 +74,9 @@ public class ProfanityFilter {
                     .body(String.class);
             return body != null && body.trim().equalsIgnoreCase("true");
         } catch (Exception e) {
+            // Still fail open, but say so. A silent outage would look like the
+            // filter passing everything on purpose.
+            log.warn("Profanity check failed, allowing the name ({})", e.toString());
             return null;
         }
     }

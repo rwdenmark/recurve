@@ -726,5 +726,7 @@ export function buildStartingMap() {
       Math.max(0, TREE_MIN - c.tree) + Math.max(0, c.tree - TREE_MAX);
     if (miss < bestMiss) { bestMiss = miss; best = map; }
   }
+  // Should be unreachable in practice. Make it loud if the bands ever drift.
+  console.warn(`Map bounds missed after ${MAX_BUILD_ATTEMPTS} attempts, using closest (miss ${bestMiss})`);
   return best;
 }
