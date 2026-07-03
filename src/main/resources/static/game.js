@@ -9,6 +9,20 @@ import {
   TILES, isSolid, isFortAt, SPAWN_POINTS, buildStartingMap,
 } from "./mapgen.js";
 import { buildFlowField, nextStepFromField } from "./pathfinding.js";
+import {
+  musicMode, playMenuMusic, playGameMusic, pauseMusic, resumeMusic,
+  playSfx, ensureAudioCtx, loadSfx,
+} from "./audio.js";
+import { renderHearts, updateHud } from "./hud.js";
+import {
+  DEFAULT_HEALTH, DEFAULT_DAMAGE, DEFAULT_ATTACK_INTERVAL_MS, DEFAULT_MOVE_DURATION_MS,
+  playerDamage, playerSpeedMult, fireRateMult, playerMultiShot, playerOmniShot,
+  playerPierce, playerArrowRange, buffsAwarded,
+  BUFF_EVERY_KILLS, startBuffSelection, resetRunStats,
+} from "./buffs.js";
+import {
+  refreshLeaderboard, startGameSession, setLastRunDuration, resetScoreForm, initScoreForm,
+} from "./net.js";
 
 const TILE_SIZE = 48;
 
@@ -93,18 +107,10 @@ const SPAWN_TARGET_START = 3;       // target population at the start of a run
 const SPAWN_TARGET_RAMP_MS = 8000;  // target grows by 1 every 8s
 const SPAWN_BATCH_RAMP_MS = 60000;  // per-tick spawn batch grows by 1 each minute
 
-const ARROW_MAX_RANGE = 6;          // base arrow range in tiles
 const ARROW_SPEED = TILE_SIZE / 50; // travel speed in px/ms (one tile per 50ms)
 
-// ---------------------------------------------------------------------------
-// Stat defaults. Rangers and enemies are defined as multiples of these, so
-// changing one rescales the whole roster at the same scale.
-// ---------------------------------------------------------------------------
-const DEFAULT_HEALTH = 3;                 // hearts
-const DEFAULT_DAMAGE = 2;                 // arrow damage
-const DEFAULT_ATTACK_INTERVAL_MS = 2000;  // time between shots at 100% attack speed
-const DEFAULT_MOVE_DURATION_MS = 225;     // ms per tile at 100% move speed
-
+// The stat defaults (DEFAULT_HEALTH and friends) live in buffs.js with the
+// run's live buff values (imported above).
 const PLAYER_MOVE_DURATION_MS = DEFAULT_MOVE_DURATION_MS;
 const PATH_SPEED_MULT  = 1.15;  // path tiles run faster
 const GRASS_SPEED_MULT = 0.85;  // grass slower
@@ -181,16 +187,6 @@ function rangerStats(i) {
   };
 }
 
-// Run buffs. Set in resetState() from the chosen ranger plus any cards taken.
-let playerDamage = DEFAULT_DAMAGE;
-let playerSpeedMult = 1.0;
-let fireRateMult = 1.0;
-let playerMultiShot = false;
-let playerOmniShot = false;
-let playerPierce = 0;            // extra enemies an arrow passes through
-let playerArrowRange = ARROW_MAX_RANGE;
-let buffsAwarded = 0;
-
 // ---------------------------------------------------------------------------
 // Canvas + HUD wiring
 // ---------------------------------------------------------------------------
@@ -205,156 +201,13 @@ canvas.style.height = `${canvas.height * DISPLAY_SCALE}px`;
 const ctx = canvas.getContext("2d");
 ctx.imageSmoothingEnabled = false;
 
-const killEl = document.getElementById("kill-count");
-const timeEl = document.getElementById("time-value");
-const heartsEl = document.getElementById("hearts");
+// The header HUD elements live in hud.js, the score form and leaderboard in net.js.
 const overlay = document.getElementById("overlay");
 const overlayTitle = document.getElementById("overlay-title");
 const overlayText = document.getElementById("overlay-text");
 const overlayButton = document.getElementById("overlay-button");
-const scoreForm = document.getElementById("score-form");
-const playerNameInput = document.getElementById("player-name");
-const submitScoreButton = document.getElementById("submit-score-button");
-const leaderboardList = document.getElementById("leaderboard-list");
 
-// ---------------------------------------------------------------------------
-// Music
-// ---------------------------------------------------------------------------
-const musicMuteBtn = document.getElementById("music-mute-btn");
-const musicSlider = document.getElementById("music-slider");
-const sfxMuteBtn = document.getElementById("sfx-mute-btn");
-const sfxSlider = document.getElementById("sfx-slider");
-
-let musicVolume = 0.10;
-let musicMuted = false;
-let sfxVolume = 0.25;
-let sfxMuted = false;
-let musicMode = "none";   // "menu" | "game" | "none"
-
-const menuMusic = new Audio("audio/menu.mp3");
-menuMusic.loop = true;
-// preload "none" so the ~7MB of game tracks download on Start, not at page load.
-// The menu track stays eager so it never gaps when the menu opens.
-const gameTracks = ["audio/game1.mp3", "audio/game2.mp3", "audio/game3.mp3"].map((src) => {
-  const a = new Audio(src);
-  a.preload = "none";
-  return a;
-});
-let currentGameTrack = 0;
-// Loop the in-game playlist: when one track ends, start the next.
-gameTracks.forEach((a, i) => {
-  a.addEventListener("ended", () => {
-    if (musicMode !== "game") return;
-    currentGameTrack = (i + 1) % gameTracks.length;
-    const next = gameTracks[currentGameTrack];
-    next.currentTime = 0;
-    next.volume = effectiveVolume();
-    next.play().catch(() => {});
-  });
-});
-
-// The tracks are loud, so the slider value is scaled down by this.
-const MUSIC_GAIN = 0.1;
-function effectiveVolume() { return musicMuted ? 0 : musicVolume * MUSIC_GAIN; }
-function effectiveSfxVolume() { return sfxMuted ? 0 : sfxVolume; }
-function applyVolume() {
-  const v = effectiveVolume();
-  menuMusic.volume = v;
-  for (const a of gameTracks) a.volume = v;
-}
-function playMenuMusic() {
-  musicMode = "menu";
-  for (const a of gameTracks) a.pause();
-  menuMusic.volume = effectiveVolume();
-  menuMusic.play().catch(() => {});
-}
-function playGameMusic() {
-  musicMode = "game";
-  menuMusic.pause();
-  // Start on a random track each run so the in-game music varies between games.
-  currentGameTrack = Math.floor(Math.random() * gameTracks.length);
-  const a = gameTracks[currentGameTrack];
-  a.currentTime = 0;
-  a.volume = effectiveVolume();
-  a.play().catch(() => {});
-}
-function pauseMusic() {
-  menuMusic.pause();
-  for (const a of gameTracks) a.pause();
-}
-function resumeMusic() {
-  if (musicMode === "game") gameTracks[currentGameTrack].play().catch(() => {});
-  else if (musicMode === "menu") menuMusic.play().catch(() => {});
-}
-function updateMuteIcon() {
-  musicMuteBtn.textContent = musicMuted || musicVolume === 0 ? "\u{1F507}" : "\u{1F50A}";
-  sfxMuteBtn.textContent = sfxMuted || sfxVolume === 0 ? "\u{1F507}" : "\u{1F50A}";
-}
-
-musicSlider.addEventListener("input", () => {
-  musicVolume = Number(musicSlider.value) / 100;
-  if (musicVolume > 0) musicMuted = false;
-  applyVolume();
-  updateMuteIcon();
-});
-musicMuteBtn.addEventListener("click", () => {
-  musicMuted = !musicMuted;
-  applyVolume();
-  updateMuteIcon();
-});
-sfxSlider.addEventListener("input", () => {
-  sfxVolume = Number(sfxSlider.value) / 100;
-  if (sfxVolume > 0) sfxMuted = false;
-  updateMuteIcon();
-});
-sfxMuteBtn.addEventListener("click", () => {
-  sfxMuted = !sfxMuted;
-  updateMuteIcon();
-});
-
-applyVolume();
-updateMuteIcon();
-
-// Sound effects via Web Audio, not HTMLAudio. A decoded buffer fires with far
-// less latency, so the bow twang stays in sync with the arrow.
-const SFX_PATHS = { bow: "audio/bow_release.mp3", hurt: "audio/male_hurt.mp3", select: "audio/card_select.mp3" };
-const SFX_GAIN = 0.25;
-let audioCtx = null;
-const sfxBuffers = {};
-function ensureAudioCtx() {
-  if (!audioCtx) {
-    try {
-      const Ctor = window.AudioContext || window.webkitAudioContext;
-      audioCtx = new Ctor({ latencyHint: "interactive" });
-    } catch (_) { audioCtx = null; }
-  }
-  return audioCtx;
-}
-function loadSfx() {
-  const ctx = ensureAudioCtx();
-  if (!ctx) return;
-  for (const [name, url] of Object.entries(SFX_PATHS)) {
-    if (sfxBuffers[name]) continue;
-    fetch(url)
-      .then((r) => r.arrayBuffer())
-      .then((b) => ctx.decodeAudioData(b))
-      .then((buf) => { sfxBuffers[name] = buf; })
-      .catch(() => {});
-  }
-}
-function playSfx(name, boost = 1) {
-  const ctx = audioCtx;
-  const buf = sfxBuffers[name];
-  const v = effectiveSfxVolume();
-  if (!ctx || !buf || v <= 0) return;
-  const src = ctx.createBufferSource();
-  src.buffer = buf;
-  const gain = ctx.createGain();
-  gain.gain.value = Math.max(0, Math.min(1, v * boost)) * SFX_GAIN;
-  src.connect(gain).connect(ctx.destination);
-  src.start();
-}
-loadSfx();
+// Music and SFX live in audio.js (imported above).
 
 const DAMAGE_FLASH_MS = 900;
 let damageFlashUntil = 0;
@@ -371,93 +224,7 @@ function unlockAudio() {
 window.addEventListener("pointerdown", unlockAudio);
 window.addEventListener("keydown", unlockAudio);
 
-try {
-  const savedName = localStorage.getItem("ranger-survivor.playerName");
-  if (savedName) playerNameInput.value = savedName;
-} catch (_) { /* localStorage may be disabled */ }
-
-let lastRunDurationSeconds = 0;
-let scoreAlreadySubmitted = false;
-// Set from POST /api/game/start so the server can time the run. Sent with the score.
-let gameSessionId = null;
-
-async function refreshLeaderboard() {
-  try {
-    const res = await fetch("api/scores/top?limit=10");
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    const scores = await res.json();
-    renderLeaderboard(scores);
-  } catch (err) {
-    console.warn("Leaderboard fetch failed:", err);
-    renderLeaderboard([]); // still show the numbered 1-10 skeleton
-  }
-}
-
-// Always render 10 ranked rows. Slots past the available scores stay blank.
-function renderLeaderboard(scores) {
-  const list = scores || [];
-  let html = "";
-  for (let i = 0; i < 10; i++) {
-    const s = list[i];
-    html +=
-      `<li>` +
-      `<span class="rank">${i + 1}.</span>` +
-      `<span class="name">${s ? escapeHtml(s.name || "Anonymous") : ""}</span>` +
-      `<span class="kills">${s ? s.kills : ""}</span>` +
-      `<span class="duration">${s ? s.durationSeconds + "s" : ""}</span>` +
-      `</li>`;
-  }
-  leaderboardList.innerHTML = html;
-}
-
-function escapeHtml(str) {
-  return String(str)
-    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;").replace(/'/g, "&#039;");
-}
-
-async function submitScore() {
-  if (scoreAlreadySubmitted) return;
-  const name = (playerNameInput.value || "").trim();
-  // No name, silently do nothing. The player can still hit Start.
-  if (!name) return;
-  try {
-    localStorage.setItem("ranger-survivor.playerName", name);
-  } catch (_) {}
-  submitScoreButton.disabled = true;
-  submitScoreButton.textContent = "Submitting…";
-  try {
-    const res = await fetch("api/scores", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name,
-        kills: state.kills,
-        durationSeconds: lastRunDurationSeconds,
-        sessionId: gameSessionId,
-      }),
-    });
-    if (res.status === 400) {
-      // Backend rejected the name (likely profanity). Show the message.
-      let msg = "Name not allowed.";
-      try {
-        const body = await res.json();
-        if (body && body.message) msg = body.message;
-      } catch (_) {}
-      submitScoreButton.disabled = false;
-      submitScoreButton.textContent = msg;
-      return;
-    }
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    scoreAlreadySubmitted = true;
-    submitScoreButton.textContent = "Submitted";
-    await refreshLeaderboard();
-  } catch (err) {
-    console.warn("Score submit failed:", err);
-    submitScoreButton.disabled = false;
-    submitScoreButton.textContent = "Submit score";
-  }
-}
+// The leaderboard, score form, and score submission live in net.js (imported above).
 
 // ---------------------------------------------------------------------------
 // World state
@@ -712,86 +479,16 @@ function renderPauseScreen() {
 }
 
 // ---------------------------------------------------------------------------
-// Upgrade cards: every BUFF_EVERY_KILLS kills, pause and offer 3 random buffs.
+// Upgrade cards live in buffs.js. This handle hands them the hooks a buff pause
+// needs from the game: the shared state, timer shifting, input clearing, and
+// the loop resume.
 // ---------------------------------------------------------------------------
-const BUFF_EVERY_KILLS = 15;
-const STACK_CAP = 10;           // max copies of a stacking buff
-const buffOverlay = document.getElementById("buff-overlay");
-const buffCardsEl = document.getElementById("buff-cards");
-let buffPausedAt = 0;
-
-// Only the title is shown, so the exact numbers stay hidden. Stacking buffs carry
-// a tally of how many you already hold (drawn as dots on the card). The special-rule
-// cards (Heal to Full, Multi-Shot, Omni-Shot) don't stack and show no tally.
-const BUFF_CARDS = [
-  { title: "Increase Life", stacking: true, available: () => true,
-    apply: () => { state.maxLives += 1; state.lives += 1; } },
-  { title: "Heal to Full", available: () => state.lives < state.maxLives,
-    apply: () => { state.lives = state.maxLives; } },
-  { title: "Increase Movement Speed", stacking: true, available: () => true,
-    apply: () => { playerSpeedMult += 0.25; } }, // additive: +25% of base each card
-  { title: "Increase Attack Speed", stacking: true, available: () => true,
-    apply: () => { fireRateMult += 0.5; } },      // additive: +50% of base each card
-  { title: "Increase Damage", stacking: true, available: () => true,
-    apply: () => { playerDamage += DEFAULT_DAMAGE; } },
-  { title: "Arrow Piercing", stacking: true, available: () => true,
-    apply: () => { playerPierce += 1; } },
-  { title: "Arrow Distance", stacking: true, available: () => true,
-    apply: () => { playerArrowRange += 1; } },
-  { title: "Multi-Shot", available: () => !playerMultiShot, // one-time
-    apply: () => { playerMultiShot = true; } },
-  { title: "Omni-Shot", available: () => playerMultiShot && !playerOmniShot, // unlocked by Multi-Shot
-    apply: () => { playerOmniShot = true; } },
-];
-
-function pickBuffCards(n) {
-  // Stacking buffs drop out of the pool once they reach STACK_CAP copies.
-  const pool = BUFF_CARDS.filter((c) =>
-    c.available() && !(c.stacking && (c.taken || 0) >= STACK_CAP));
-  for (let i = pool.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [pool[i], pool[j]] = [pool[j], pool[i]];
-  }
-  return pool.slice(0, Math.min(n, pool.length));
-}
-
-function startBuffSelection(now) {
-  buffsAwarded += 1; // count the award (advances the next threshold) even if nothing is offered
-  const cards = pickBuffCards(3);
-  if (cards.length === 0) return; // everything maxed out: skip the pause, keep playing
-  state.choosingBuff = true;
-  buffPausedAt = now;
-  heldMoveKeys.clear();   // drop held input so the player doesn't auto-move on resume
-  mouseDown = false;
-  buffCardsEl.innerHTML = "";
-  for (const card of cards) {
-    const el = document.createElement("button");
-    el.type = "button";
-    el.className = "buff-card";
-    // Stacking buffs show STACK_CAP circles, filled by how many copies you hold.
-    const dots = card.stacking
-      ? `<span class="buff-dots">` +
-        Array.from({ length: STACK_CAP }, (_, i) =>
-          `<span class="buff-dot${i < (card.taken || 0) ? " full" : ""}"></span>`).join("") +
-        `</span>`
-      : "";
-    el.innerHTML = dots + `<span class="buff-title">${card.title}</span>`;
-    el.addEventListener("click", () => chooseBuff(card));
-    buffCardsEl.appendChild(el);
-  }
-  buffOverlay.classList.remove("hidden");
-}
-
-function chooseBuff(card) {
-  if (!state.choosingBuff) return; // guard against double-clicks
-  card.apply();
-  card.taken = (card.taken || 0) + 1;
-  buffOverlay.classList.add("hidden");
-  state.choosingBuff = false;
-  shiftTimers(performance.now() - buffPausedAt);
-  renderHearts();
-  requestAnimationFrame(loop);
-}
+const buffGame = {
+  state,
+  shiftTimers,
+  clearHeldInput: () => { heldMoveKeys.clear(); mouseDown = false; },
+  resume: () => requestAnimationFrame(loop),
+};
 
 // Start a tile step from the held WASD keys. Never interrupts a step in progress.
 function tryStartMove() {
@@ -1169,7 +866,7 @@ function startPlayerDeath(now) {
   heldMoveKeys.clear();
   mouseDown = false;
   // Run ends at death, so capture duration here, not when the animation finishes.
-  lastRunDurationSeconds = Math.floor((now - state.startedAt) / 1000);
+  setLastRunDuration(Math.floor((now - state.startedAt) / 1000));
 }
 
 // ---------------------------------------------------------------------------
@@ -1404,42 +1101,7 @@ function renderDamageVignette(now) {
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 }
 
-// ---------------------------------------------------------------------------
-// HUD
-// ---------------------------------------------------------------------------
-
-let renderedLives = "";
-
-function renderHearts() {
-  const key = `${state.lives}/${state.maxLives}`;
-  if (key === renderedLives) return; // only rebuild when it changes
-  renderedLives = key;
-  let html = "";
-  // Filled hearts on the left, outlined on the right.
-  for (let i = 0; i < state.maxLives; i++) {
-    const full = i < state.lives;
-    html += `<span class="heart ${full ? "full" : "empty"}">${full ? "♥" : "♡"}</span>`;
-  }
-  heartsEl.innerHTML = html;
-}
-
-let renderedKills = -1;
-let renderedTimeSec = -1;
-
-// Only touch the DOM when a value actually changes (the loop runs ~60x/s but kills
-// and the second counter change far less often), matching renderHearts.
-function updateHud(now) {
-  if (state.kills !== renderedKills) {
-    renderedKills = state.kills;
-    killEl.textContent = String(state.kills);
-  }
-  const elapsed = state.running ? Math.floor((now - state.startedAt) / 1000) : 0;
-  if (elapsed !== renderedTimeSec) {
-    renderedTimeSec = elapsed;
-    timeEl.textContent = `${elapsed}s`;
-  }
-  renderHearts();
-}
+// The header HUD (hearts, kills, timer) lives in hud.js (imported above).
 
 // ---------------------------------------------------------------------------
 // Game loop
@@ -1462,8 +1124,8 @@ function loop(now) {
       stepEnemies(now);
       resolveCollisions();
       render(now);
-      updateHud(now);
-      if (state.kills >= (buffsAwarded + 1) * BUFF_EVERY_KILLS) startBuffSelection(now);
+      updateHud(now, state);
+      if (state.kills >= (buffsAwarded + 1) * BUFF_EVERY_KILLS) startBuffSelection(now, buffGame);
     }
   } catch (err) {
     // Keep one frame's exception from killing the rAF chain.
@@ -1483,17 +1145,8 @@ function start() {
   playGameMusic();
   state.startedAt = performance.now();
   state.lastSpawnAt = state.startedAt;
-  // Open a server-timed session for this run. If it fails, the score just can't be
-  // submitted later (the leaderboard would be unreachable anyway).
-  gameSessionId = null;
-  fetch("api/game/start", { method: "POST" })
-    .then((r) => (r.ok ? r.json() : null))
-    .then((d) => { if (d) gameSessionId = d.sessionId; })
-    .catch(() => {});
-  scoreForm.classList.add("hidden");
-  scoreAlreadySubmitted = false;
-  submitScoreButton.disabled = false;
-  submitScoreButton.textContent = "Submit score";
+  startGameSession();
+  resetScoreForm(false);
   overlay.classList.add("hidden");
   canvas.focus();
   requestAnimationFrame(loop);
@@ -1517,15 +1170,7 @@ function resetState() {
   lastArrowFiredAt = -DEFAULT_ATTACK_INTERVAL_MS;
   pendingShot = null;
   mouseDown = false;
-  playerDamage = ranger.damage;
-  playerSpeedMult = ranger.speed;
-  fireRateMult = ranger.fireRate;
-  playerMultiShot = false;
-  playerOmniShot = false;
-  playerPierce = 0;
-  playerArrowRange = ARROW_MAX_RANGE;
-  buffsAwarded = 0;
-  for (const c of BUFF_CARDS) c.taken = 0;
+  resetRunStats(ranger);
   state.enemies = [];
   state.projectiles = [];
   state.tileMap = buildStartingMap();
@@ -1536,10 +1181,7 @@ function gameOver() {
   playMenuMusic();
   overlayTitle.textContent = `Enemies killed: ${state.kills}`;
   overlayText.textContent = "Move with WASD. Aim with the mouse, left-click to shoot.";
-  scoreForm.classList.remove("hidden");
-  scoreAlreadySubmitted = false;
-  submitScoreButton.disabled = false;
-  submitScoreButton.textContent = "Submit score";
+  resetScoreForm(true);
   overlay.classList.remove("hidden");
   refreshLeaderboard();
   startCharPreviewLoop(); // let them re-pick an archer before the next run
@@ -1572,7 +1214,7 @@ function showRangerHud() {
   const r = rangerStats(selectedArcher);
   state.maxLives = r.hearts;
   state.lives = r.hearts;
-  renderHearts();
+  renderHearts(state);
 }
 
 try {
@@ -1658,13 +1300,7 @@ for (const card of charCards) {
 }
 
 overlayButton.addEventListener("click", () => { playSfx("select", 4); start(); });
-submitScoreButton.addEventListener("click", () => { playSfx("select", 4); submitScore(); });
-playerNameInput.addEventListener("keydown", (e) => {
-  if (e.key === "Enter") {
-    e.preventDefault();
-    submitScore();
-  }
-});
+initScoreForm(() => state.kills); // submit button and Enter, wired in net.js
 window.addEventListener("keydown", onKeyDown);
 window.addEventListener("keyup", onKeyUp);
 

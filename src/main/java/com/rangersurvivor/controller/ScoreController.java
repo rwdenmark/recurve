@@ -72,6 +72,10 @@ public class ScoreController {
         // Trimmed once here so the filter and the stored row see the same name.
         // @NotBlank already guarantees there is something left after the trim.
         String name = submission.name().trim();
+        if (containsInvisible(name)) {
+            return ResponseEntity.badRequest()
+                    .body(Map.of("message", "Name contains invisible or control characters"));
+        }
         // Checked before consuming the session so a profane name can be fixed and resubmitted.
         if (profanityFilter.isProfane(name)) {
             return ResponseEntity.badRequest()
@@ -87,6 +91,22 @@ public class ScoreController {
 
     private ResponseEntity<?> rejected() {
         return ResponseEntity.badRequest().body(Map.of("message", "Score rejected"));
+    }
+
+    // Loose whitelist. Real names in any language pass. What gets rejected are the
+    // characters that render as nothing or reorder text (bidi controls, zero-width
+    // joiners, BOM) plus ordinary control characters, since any of those can blank
+    // or spoof a leaderboard row. Same rule and list as astro-siege.
+    private static boolean containsInvisible(String name) {
+        for (int i = 0; i < name.length(); i++) {
+            char c = name.charAt(i);
+            if (Character.isISOControl(c)) return true;
+            if (c >= '\u202A' && c <= '\u202E') return true; // bidi embeddings and overrides
+            if (c >= '\u2066' && c <= '\u2069') return true; // bidi isolates
+            if (c >= '\u200B' && c <= '\u200D') return true; // zero-width space and joiners
+            if (c == '\u2060' || c == '\uFEFF') return true; // word joiner and BOM
+        }
+        return false;
     }
 
     @GetMapping("/top")

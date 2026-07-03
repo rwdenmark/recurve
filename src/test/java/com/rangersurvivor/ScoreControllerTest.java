@@ -102,6 +102,42 @@ class ScoreControllerTest {
     }
 
     @Test
+    void rtlOverrideNameIsRejected() throws Exception {
+        // U+202E reverses render order, letting a name spoof how it reads on the board.
+        mockMvc.perform(post("/api/scores")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json("ryan\u202Enayr", 10, 60)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Name contains invisible or control characters"));
+    }
+
+    @Test
+    void zeroWidthNameIsRejected() throws Exception {
+        // A zero-width space renders as nothing, so two visually identical names could differ.
+        mockMvc.perform(post("/api/scores")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json("ry\u200Ban", 10, 60)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Name contains invisible or control characters"));
+    }
+
+    @Test
+    void internationalNamesAreAccepted() throws Exception {
+        // The check targets invisible characters only. Accented and CJK names pass.
+        mockMvc.perform(post("/api/scores")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json("Jos\u00E9", 10, 60)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value("Jos\u00E9"));
+
+        mockMvc.perform(post("/api/scores")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json("\u9F8D", 5, 61)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value("\u9F8D"));
+    }
+
+    @Test
     void blankNameIsRejected() throws Exception {
         mockMvc.perform(post("/api/scores")
                         .contentType(MediaType.APPLICATION_JSON)
