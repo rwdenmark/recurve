@@ -8,8 +8,8 @@ A top-down tile-based survival shooter. Move with WASD, aim with the mouse and l
 - Move continuously by holding WASD. Path tiles are faster than grass, water and trees block.
 - Aim with the mouse and hold left-click to fire arrows straight at the cursor at a fixed cadence. The ranger faces the cursor. Press space to pause.
 - Hearts deplete when an enemy that reaches you lands a windup attack. Zero hearts ends the run.
-- Three enemy types spawn from the corner and edge forts: enemy_one, enemy_two (unlocks at 45s), enemy_three (unlocks at 90s), each tougher than the last. Newer types ramp in gradually and the overall spawn rate accelerates with kills.
-- Every 15 kills the run pauses and offers three random upgrade cards: extra or refilled hearts, movement speed, fire rate, arrow damage, arrow piercing, arrow distance, multi-shot (a 3-arrow fan), or omni-shot (all 8 directions, unlocked once multi-shot is taken). Buffs stack for the rest of the run.
+- Three enemy types spawn from the corner and edge forts, each tougher than the last. enemy_one is there from the start, enemy_two unlocks after the third upgrade card (about 45 kills), enemy_three after the sixth (about 90 kills). A type spawns at full weight the moment it unlocks, and the overall spawn rate accelerates with elapsed time.
+- Every 15 kills the run pauses and offers three random upgrade cards. The pool covers extra or refilled hearts, movement speed, fire rate, arrow damage, arrow piercing, arrow distance, multi-shot (a 3-arrow fan), and omni-shot (all 8 directions, unlocked once multi-shot is taken). Buffs stack for the rest of the run.
 
 ## Architecture
 
@@ -18,13 +18,13 @@ A top-down tile-based survival shooter. Move with WASD, aim with the mouse and l
 - Game loop driven by `requestAnimationFrame`.
 - Tile grid stored as a 2D array, drawn each frame from 48px tile sprites (grass, path, water, tree), with the map border built from rotated mountain side and corner pieces. Procedural map generation lives in `mapgen.js` (a pure, DOM-free module) and runs BFS reachability so every fort can reach the player.
 - Sprite-sheet animation system (idle/walk/run/attack/hurt/die) anchored per character so sprites stay put across poses.
-- Every enemy chases the player, so pathfinding is a single BFS flow field (`pathfinding.js`): one breadth-first sweep from the player each time it changes tiles builds a distance field, and every enemy steps to the neighbor closest to the player. Enemies respect the same terrain speed multipliers the player does.
+- Every enemy chases the player, so pathfinding is a single BFS flow field (`pathfinding.js`). One breadth-first sweep from the player each time it changes tiles builds a distance field, and every enemy steps to the neighbor closest to the player. Enemies respect the same terrain speed multipliers the player does.
 - Music and sound effects play through the Web Audio API with separate volume controls.
 
 **Backend** is a Spring Boot REST API for high scores.
 
 - `POST /api/game/start` opens a server-timed session and returns its id.
-- `POST /api/scores` accepts `{ name, kills, durationSeconds, sessionId }`. The server checks the session exists, that the claimed run length doesn't exceed the real elapsed time since the session started, and that the kill count is within what the spawn schedule could produce in that time (a model mirrored from the frontend, so there's no hand-tuned cap to re-tune when balance changes). Then it rate-limits per client, runs a profanity filter, and persists. The session is single-use. This stops casual tampering but isn't full anti-cheat, which would need server-side replay.
+- `POST /api/scores` accepts `{ name, kills, durationSeconds, sessionId }`. Submissions are rate-limited per client first. The server then checks the session exists, that the claimed run length doesn't exceed the real elapsed time since the session started, and that the kill count is within what the spawn schedule could produce in that time (a model mirrored from the frontend, so there's no hand-tuned cap to re-tune when balance changes). A profanity filter runs on the name, and only then is the single-use session consumed and the score persisted. Sessions live in memory, so a server restart mid-run means that run's score can't be submitted. This stops casual tampering but isn't full anti-cheat, which would need server-side replay.
 - `GET /api/scores/top?limit=N` returns the top N scores by kills (limit clamped to 1..100).
 - `GET /api/health` is a fast liveness probe that also wakes the database.
 
@@ -32,11 +32,11 @@ H2 in-memory database for local development. The prod profile uses Postgres with
 
 ## Quick start
 
-Requires Java 17+ and Maven.
+Requires Java 17+. The Maven wrapper is included.
 
 ```bash
 cd ranger-survivor
-mvn spring-boot:run
+./mvnw spring-boot:run
 # open http://localhost:8080 in a browser
 ```
 
@@ -45,11 +45,11 @@ The H2 console is at `http://localhost:8080/h2-console` (jdbc url `jdbc:h2:mem:r
 ## Tests
 
 ```bash
-mvn test        # backend: controller + profanity-filter tests
-node --test     # frontend: map-generation property tests (requires Node 18+)
+./mvnw test                # backend tests (controller, game session, spawn model, profanity filter)
+node --test src/test/js    # frontend tests (map generation, pathfinding; requires Node 18+)
 ```
 
-The frontend tests generate hundreds of maps and assert the generator's invariants: every fort reachable from the player, paths kept one tile wide, water orthogonally connected, and obstacle counts within their caps.
+The frontend tests generate hundreds of maps and assert the generator's invariants. Every fort is reachable from the player, paths stay one tile wide, water is orthogonally connected, and obstacle counts stay within their caps.
 
 ## Project structure
 
@@ -59,11 +59,11 @@ ranger-survivor/
 ├── pom.xml
 ├── src/main/java/com/rangersurvivor/
 │   ├── RangerSurvivorApplication.java
-│   ├── controller/        # ScoreController, HealthController
+│   ├── controller/        # ScoreController, GameSessionController, HealthController
 │   ├── dto/               # ScoreSubmission (in), ScoreView (out)
 │   ├── model/Score.java
 │   ├── repository/ScoreRepository.java
-│   └── service/           # ProfanityFilter, SubmissionRateLimiter
+│   └── service/           # GameSessionService, SpawnModel, ProfanityFilter, SubmissionRateLimiter
 ├── src/main/resources/
 │   ├── application.yml
 │   ├── db/migration/      # Flyway migrations (prod/Postgres)
@@ -78,6 +78,8 @@ ranger-survivor/
 └── src/test/
     ├── java/com/rangersurvivor/
     │   ├── ScoreControllerTest.java
+    │   ├── GameSessionServiceTest.java
+    │   ├── SpawnModelTest.java
     │   └── ProfanityFilterTest.java
     └── js/
         ├── mapgen.test.js      # map-generation property tests

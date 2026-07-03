@@ -10,7 +10,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * In-memory sliding-window rate limiter, keyed by client. Single-instance only,
- * matching the free-tier deployment; move to a shared store to scale out.
+ * matching the free-tier deployment. Move to a shared store to scale out.
  */
 @Service
 public class SubmissionRateLimiter {

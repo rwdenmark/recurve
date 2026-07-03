@@ -9,10 +9,10 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 /**
- * Liveness probe for Render's health check and the portfolio's Live Demo failover.
+ * Liveness probe for platform health checks and the demo failover.
  * Returns 200 immediately, then asynchronously runs SELECT 1 to wake the database
- * (it auto-suspends on the free tier) before the visitor lands. CORS is opened to
- * the portfolio origin and the Tailscale Funnel host.
+ * (it auto-suspends on the free tier) before the visitor lands. CORS is limited
+ * to the origins that poll this endpoint.
  */
 @RestController
 public class HealthController {

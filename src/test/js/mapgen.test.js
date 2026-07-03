@@ -158,7 +158,7 @@ test("wanderingRouteToCenter is a contiguous fort-free path ending at center", (
         const step = Math.abs(ax - bx) + Math.abs(ay - by);
         assert.equal(step, 1, `step ${j} is a single orthogonal move on run ${i}`);
         assert.ok(bx >= 1 && bx < MAP_COLS - 1 && by >= 1 && by < MAP_ROWS - 1, "stays interior");
-        // Only the starting tile may be a fort; the route never crosses another.
+        // Only the starting tile may be a fort. The route never crosses another.
         assert.ok(!isFortAt(bx, by), `route tile (${bx},${by}) is not a fort on run ${i}`);
       }
     }

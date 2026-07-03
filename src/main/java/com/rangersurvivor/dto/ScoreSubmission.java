@@ -6,9 +6,9 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 
 /**
- * Inbound score submission. The bounds here are a first gate; the controller then
+ * Inbound score submission. The bounds here are a first gate. The controller then
  * verifies the run against its server-timed session and the spawn model. sessionId
- * is the id from POST /api/game/start; it's validated in the controller, not here,
+ * is the id from POST /api/game/start. It's validated in the controller, not here,
  * so a missing one yields a clean "Score rejected" rather than a bean-validation 400.
  */
 public record ScoreSubmission(

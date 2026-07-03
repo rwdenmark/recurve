@@ -4,6 +4,6 @@
   "type": "module",
   "description": "Frontend tests for the canvas game. The Spring Boot backend is built with Maven; this only covers the pure JS modules under src/main/resources/static.",
   "scripts": {
-    "test": "node --test"
+    "test": "node --test src/test/js"
   }
 }

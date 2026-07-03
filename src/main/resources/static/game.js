@@ -1,4 +1,4 @@
-// Ranger Survivor: top-down tile-based survival shooter.
+// Ranger Survivor, a top-down tile-based survival shooter.
 
 // ---------------------------------------------------------------------------
 // Config
@@ -149,7 +149,7 @@ function spawnWeight(typeKey) {
   return buffsAwarded >= ENEMY_TYPES[typeKey].unlockCards ? 1 : 0;
 }
 // Shared by player and enemies so speedScale stays a true fraction of player
-// speed on the same terrain; otherwise enemies outpace a grass-slowed player.
+// speed on the same terrain. Otherwise enemies outpace a grass-slowed player.
 function terrainMult(tileId) {
   if (tileId === TILES.PATH) return PATH_SPEED_MULT;
   if (tileId === TILES.GRASS) return GRASS_SPEED_MULT;
@@ -315,7 +315,7 @@ sfxMuteBtn.addEventListener("click", () => {
 applyVolume();
 updateMuteIcon();
 
-// Sound effects via Web Audio, not HTMLAudio: a decoded buffer fires with far
+// Sound effects via Web Audio, not HTMLAudio. A decoded buffer fires with far
 // less latency, so the bow twang stays in sync with the arrow.
 const SFX_PATHS = { bow: "audio/bow_release.mp3", hurt: "audio/male_hurt.mp3", select: "audio/card_select.mp3" };
 const SFX_GAIN = 0.25;
@@ -577,7 +577,7 @@ let lastArrowFiredAt = -DEFAULT_ATTACK_INTERVAL_MS; // far in the past = ready t
 let pendingShot = null;
 
 // Aim with the mouse, fire on left button. mouseX/Y are canvas pixels (null until
-// the pointer moves over the canvas); mouseDown drives continuous fire.
+// the pointer moves over the canvas). mouseDown drives continuous fire.
 let mouseX = null;
 let mouseY = null;
 let mouseDown = false;
@@ -721,7 +721,7 @@ const buffCardsEl = document.getElementById("buff-cards");
 let buffPausedAt = 0;
 
 // Only the title is shown, so the exact numbers stay hidden. Stacking buffs carry
-// a tally of how many you already hold (drawn as dots on the card); the special-rule
+// a tally of how many you already hold (drawn as dots on the card). The special-rule
 // cards (Heal to Full, Multi-Shot, Omni-Shot) don't stack and show no tally.
 const BUFF_CARDS = [
   { title: "Increase Life", stacking: true, available: () => true,
@@ -793,7 +793,7 @@ function chooseBuff(card) {
   requestAnimationFrame(loop);
 }
 
-// Start a tile step from the held WASD keys; never interrupts a step in progress.
+// Start a tile step from the held WASD keys. Never interrupts a step in progress.
 function tryStartMove() {
   if (state.player.moving) return;
   const dx = (heldMoveKeys.has("right") ? 1 : 0) - (heldMoveKeys.has("left") ? 1 : 0);
@@ -1092,7 +1092,7 @@ function enemyCenterPx(enemy, now) {
 function resolveCollisions() {
   const now = performance.now();
   const r2 = ENEMY_HIT_RADIUS * ENEMY_HIT_RADIUS;
-  // Each arrow hits up to (1 + playerPierce) distinct enemies; hitEnemies is tracked
+  // Each arrow hits up to (1 + playerPierce) distinct enemies. hitEnemies is tracked
   // per arrow so it never re-hits one as it passes over it across frames. Enemy
   // centers are computed once here, not per arrow, since this loop is the hot path.
   const live = [];
@@ -1120,8 +1120,8 @@ function resolveCollisions() {
   // Player damage comes from enemy attack windups (stepEnemies), not contact.
 }
 
-// Apply one arrow's damage. A fatal hit starts the death and counts the kill; a
-// non-fatal hit plays the flinch.
+// Apply one arrow's damage. A fatal hit starts the death and counts the kill.
+// A non-fatal hit plays the flinch.
 function damageEnemy(enemy, now) {
   enemy.hp -= playerDamage;
   if (enemy.hp <= 0) {
@@ -1141,7 +1141,7 @@ function damageEnemy(enemy, now) {
   }
 }
 
-// Lose a heart. A non-fatal hit plays the hurt flinch; the last heart starts death.
+// Lose a heart. A non-fatal hit plays the hurt flinch. The last heart starts death.
 function damagePlayer(now, dmg) {
   const p = state.player;
   if (p.dying) return;
@@ -1321,7 +1321,7 @@ function renderEnemies(now) {
       frameIndex = animFrameIndex(enemy.animStart, now, enemy.anim, false);
     }
 
-    // Knight sheet faces right; flip when facing left.
+    // Knight sheet faces right. Flip when facing left.
     if (!drawAnim(type.cell, enemy.anim, frameIndex, centerX, baseY, enemy.facing === "left")) {
       ctx.fillStyle = "#c93737";
       ctx.beginPath();
@@ -1348,7 +1348,7 @@ function renderPlayer(now) {
   const centerX = px + TILE_SIZE / 2;
   const baseY = py + TILE_SIZE;
 
-  // Choose the animation: die > hurt > attack (while shooting) > run/walk > idle.
+  // Animation priority is die > hurt > attack (while shooting) > run/walk > idle.
   let desired;
   if (p.dying) {
     desired = "DIE";
@@ -1364,7 +1364,7 @@ function renderPlayer(now) {
   }
   if (p.anim !== desired) { p.anim = desired; p.animStart = now; }
 
-  // DIE and HURT play once; the rest loop. ATTACK is sped up by the fire rate.
+  // DIE and HURT play once, the rest loop. ATTACK is sped up by the fire rate.
   const once = p.anim === "DIE" || p.anim === "HURT";
   const atkSpeed = p.anim === "ATTACK" ? fireRateMult : 1;
   const frameIndex = animFrameIndex(p.animStart, now, p.anim, once, atkSpeed);
@@ -1449,7 +1449,7 @@ function loop(now) {
   if (!state.running || state.paused || state.choosingBuff) return;
   try {
     if (state.player.dying) {
-      // Only the death animation advances; then go to the retry screen.
+      // Only the death animation advances, then go to the retry screen.
       render(now);
       if (animDone(state.player.deathStart, now, "DIE")) { gameOver(); return; }
     } else {
@@ -1681,7 +1681,7 @@ canvas.addEventListener("mousedown", (event) => {
 window.addEventListener("mouseup", (event) => { if (event.button === 0) mouseDown = false; });
 
 // Auto-pause when the game leaves the foreground. A hidden tab suspends rAF, so
-// without this the wall-clock timers would jump ahead on return; togglePause shifts
+// without this the wall-clock timers would jump ahead on return. togglePause shifts
 // them instead. visibilitychange covers tabs/minimize, blur covers other windows.
 function autoPauseOnLeave() {
   if (state.running && !state.paused && !state.choosingBuff) togglePause();

@@ -39,7 +39,7 @@ export const SPAWN_POINTS = [
 for (const s of SPAWN_POINTS) FORT_CELLS.add(fortKey(s.x, s.y));
 
 // Perpendicular-wander probability for the guaranteed spawn-to-center routes. 0
-// reproduces the old dead-straight lanes; higher values bow them more. Tune here.
+// reproduces the old dead-straight lanes, higher values bow them more. Tune here.
 const ROUTE_WANDER = 0.33;
 
 // Enforced bounds on the final tile count of each terrain type. The randomized
@@ -244,7 +244,7 @@ function buildMapOnce() {
   for (let i = 0; i < routesToDraw && i < drawOrder.length; i++) {
     carveRoutePath(drawRoutes[drawOrder[i]]);
   }
-  // A couple of small offshoots where they fit; the castle routes carry the rest.
+  // A couple of small offshoots where they fit. The castle routes carry the rest.
   for (let b = 3 + Math.floor(Math.random() * 3); b > 0; b--) growBranch();
 
   for (const s of SPAWN_POINTS) {
@@ -360,7 +360,7 @@ function buildMapOnce() {
     }
   }
 
-  // Keep only the path network connected to the center; drop stray path tiles and
+  // Keep only the path network connected to the center. Drop stray path tiles and
   // stubs that don't reach it (like a lone fort nub). Enemy reachability is provided
   // separately by the reserved grass lanes, so removing cosmetic path is safe.
   function removeDisconnectedFromCenter() {
@@ -497,7 +497,7 @@ function buildMapOnce() {
   // and trees (which skip reserved tiles) can never block a fort's only path. The
   // route wanders (see wanderingRouteToCenter), so the guaranteed open lane is not
   // a straight cardinal line. The interior is obstacle-free at this point, so any
-  // such route is walkable; reserving it keeps it that way.
+  // such route is walkable. Reserving it keeps it that way.
   function protectFortRoutes() {
     for (const s of SPAWN_POINTS) {
       for (const [x, y] of wanderingRouteToCenter(s.x, s.y)) {
@@ -525,7 +525,7 @@ function buildMapOnce() {
   const orthoDirs = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 
   // Grow ponds until the water budget is met. A pond that stalls below the
-  // minimum is rolled back and retried; the budget is never overshot.
+  // minimum is rolled back and retried. The budget is never overshot.
   let totalWater = 0;
   let clusterAttempts = 0;
   while (totalWater < waterTarget && clusterAttempts++ < 300) {
@@ -713,7 +713,7 @@ function withinBounds(c) {
 // Build a map, retrying until path, water, and tree counts all fall inside their
 // [MIN, MAX] bands. Generation is cheap and rarely misses (only ever on the low
 // side, since placement never overshoots a target), so the attempt cap guarantees
-// the bounds in practice; the closest attempt is returned as a fallback.
+// the bounds in practice. The closest attempt is returned as a fallback.
 export function buildStartingMap() {
   let best = null, bestMiss = Infinity;
   for (let attempt = 0; attempt < MAX_BUILD_ATTEMPTS; attempt++) {

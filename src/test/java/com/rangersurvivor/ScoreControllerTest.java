@@ -46,7 +46,7 @@ class ScoreControllerTest {
     @BeforeEach
     void defaults() {
         // A session that started 10 minutes ago, so any plausible duration fits.
-        // (ProfanityFilter is left at its default mock verdict of false; profaneName
+        // (ProfanityFilter is left at its default mock verdict of false. profaneName
         // stubs it true, and tests that reject earlier never reach it.)
         when(sessions.startMillis(anyString())).thenReturn(System.currentTimeMillis() - 600_000L);
         when(sessions.consume(anyString())).thenReturn(true);

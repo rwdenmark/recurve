@@ -15,7 +15,7 @@ import java.util.Map;
 /**
  * Profanity filter backed by the free PurgoMalum REST API.
  *
- * Fail-open: on an upstream error or timeout, allow the submission rather than
+ * Fails open. On an upstream error or timeout, allow the submission rather than
  * block a legitimate player. The leaderboard is low-stakes.
  *
  * Verdicts are cached per normalized name, so repeat submissions skip the network.
@@ -32,7 +32,7 @@ public class ProfanityFilter {
             .requestFactory(timeoutFactory())
             .build();
 
-    // Bounded LRU. A verdict never changes, so no TTL; the cap bounds the map.
+    // Bounded LRU. A verdict never changes, so no TTL. The cap bounds the map.
     // Only real verdicts are cached, never the fail-open result.
     private final Map<String, Boolean> cache = Collections.synchronizedMap(
             new LinkedHashMap<String, Boolean>(16, 0.75f, true) {
