@@ -5,7 +5,7 @@
 import { playSfx } from "./audio.js";
 
 const scoreForm = document.getElementById("score-form");
-const playerNameInput = document.getElementById("player-name");
+const playerNameInput = document.getElementById("callsign");
 const submitScoreButton = document.getElementById("submit-score-button");
 const leaderboardList = document.getElementById("leaderboard-list");
 

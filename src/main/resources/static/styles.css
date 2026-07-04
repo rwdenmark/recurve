@@ -346,7 +346,7 @@ html, body {
   visibility: hidden;
 }
 
-.name-input {
+.callsign-input {
   background: #1d1f25;
   border: 1px solid #2c2e34;
   color: var(--text);
@@ -357,7 +357,7 @@ html, body {
   min-width: 0;
 }
 
-.name-input:focus {
+.callsign-input:focus {
   outline: none;
   border-color: var(--accent);
 }
