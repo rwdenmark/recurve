@@ -23,26 +23,40 @@ import {
 import {
   refreshLeaderboard, startGameSession, setLastRunDuration, resetScoreForm, initScoreForm,
 } from "./net.js";
+import {
+  generateLevel2, l2Solid, l2BlocksProjectile, l2SpeedMult, l2Background, l2Grid, L2_SPAWNS,
+} from "./level2.js";
 
 const TILE_SIZE = 48;
 
 const SPRITE_PATHS = {
+  // --- Level 1 assets (level_one/) ---
   // Character sheets: 6 rows (idle/walk/run/attack/hurt/die) x 10 frames.
-  archer: "sprites/archer_anim.png",
-  archer2: "sprites/archer2_anim.png",
-  archer3: "sprites/archer3_anim.png",
-  knight: "sprites/knight_anim.png",
-  knight2: "sprites/knight2_anim.png",
-  knight3: "sprites/knight3_anim.png",
-  arrow:  "sprites/arrow.png",
-  spawnCastle: "sprites/spawn_castle.png",
-  grass: "sprites/grass.png",
-  path:  "sprites/path.png",
-  water: "sprites/water.png",
-  tree:  "sprites/tree.png",
+  archer: "level_one/archer_anim.png",
+  archer2: "level_one/archer2_anim.png",
+  archer3: "level_one/archer3_anim.png",
+  knight: "level_one/knight_anim.png",
+  knight2: "level_one/knight2_anim.png",
+  knight3: "level_one/knight3_anim.png",
+  arrow:  "level_one/arrow.png",
+  spawnCastle: "level_one/spawn_castle.png",
+  grass: "level_one/grass.png",
+  path:  "level_one/path.png",
+  water: "level_one/water.png",
+  tree:  "level_one/tree.png",
   // Border tiles are rotated per position so the dark edge faces into the map.
-  mountainSide: "sprites/mountain_side.png",
-  mountainCorner: "sprites/mountain_corner.png",
+  mountainSide: "level_one/mountain_side.png",
+  mountainCorner: "level_one/mountain_corner.png",
+  // --- Level 2 assets (level_two/) ---
+  troll:  "level_two/troll_anim.png",
+  troll2: "level_two/troll2_anim.png",
+  troll3: "level_two/troll3_anim.png",
+  caveSheet: "level_two/cave.png",       // floor + scatter tiles (16px grid)
+  caveWater: "level_two/water.png",      // flat deep-water colour
+  caveLava:  "level_two/lava.png",       // molten lava texture
+  cavePath:  "level_two/path.png",       // dark-packed dirt path tile
+  caveStalagmite: "level_two/stalagmite.png",
+  caveFrame: "level_two/frame.png",      // baked border: edges + corners + spawn portals
 };
 
 const SRC = {
@@ -68,6 +82,14 @@ function playerCell() { return { ...ARCHER_CELL, sheet: ARCHER_SHEETS[selectedAr
 const KNIGHT_CELL  = { sheet: "knight",  w: 350, h: 240, ax: 141.9, ay: 235.5, scale: 0.2109 };
 const KNIGHT2_CELL = { sheet: "knight2", w: 350, h: 240, ax: 152.9, ay: 235.5, scale: 0.2109 };
 const KNIGHT3_CELL = { sheet: "knight3", w: 350, h: 240, ax: 147.4, ay: 235.5, scale: 0.2109 };
+// Troll enemy sheets, packed from the CraftPix troll frames into the same 6-row
+// (idle/walk/run/attack/hurt/die) x 10-frame layout as the knights. ax is each troll's
+// horizontal pixel-mass centroid and ay its feet baseline, so it anchors to its tile
+// like the other characters. Scale matches the knights for now; tune per enemy type
+// when the spawn logic is wired up.
+const TROLL_CELL  = { sheet: "troll",  w: 307, h: 240, ax: 120.9, ay: 235.0, scale: 0.2109 };
+const TROLL2_CELL = { sheet: "troll2", w: 305, h: 240, ax: 120.0, ay: 232.0, scale: 0.2109 };
+const TROLL3_CELL = { sheet: "troll3", w: 301, h: 240, ax: 122.5, ay: 236.0, scale: 0.2109 };
 const ANIM_FRAME_MS = { IDLE: 130, WALK: 80, RUN: 60, ATTACK: 55, HURT: 70, DIE: 90 };
 const ATTACK_HOLD_MS = ANIM_FRAMES * ANIM_FRAME_MS.ATTACK;
 // The arrow leaves the bow partway through the swing (draw first, then release).
@@ -146,13 +168,33 @@ const ENEMY_TYPES = {
     unlockCards: 6,
   },
 };
+// Troll enemy types for level 2. Same shape as the knights, mirroring the matching
+// knight's speed/damage/windup, but with double the health (hpScale x2) and unlocking
+// on level-2 cards (troll1 from the start, troll2 after 2, troll3 after 4).
+const TROLL_TYPES = {
+  troll_one:   { cell: TROLL_CELL,  speedScale: 0.25, attackWindupMs: 1000, damage: 1, hpScale: 2, unlockCards: 0 },
+  troll_two:   { cell: TROLL2_CELL, speedScale: 0.40, attackWindupMs: 1000, damage: 1, hpScale: 4, unlockCards: 2 },
+  troll_three: { cell: TROLL3_CELL, speedScale: 0.60, attackWindupMs: 1000, damage: 1, hpScale: 8, unlockCards: 4 },
+};
+// Every enemy across both levels, keyed by type, so lookups (HP, cell, step timing)
+// don't care which level spawned it.
+const ALL_TYPES = { ...ENEMY_TYPES, ...TROLL_TYPES };
+// Level wiring: the 8th upgrade card ends level 1, and each level uses its own enemy
+// types and spawn points.
+const CARDS_TO_LEVEL2 = 8;
+const LEVEL_TYPES = { 1: ["enemy_one", "enemy_two", "enemy_three"], 2: ["troll_one", "troll_two", "troll_three"] };
+function levelTypes() { return LEVEL_TYPES[level]; }
+function levelSpawns() { return level === 2 ? L2_SPAWNS.map(([x, y]) => ({ x, y })) : SPAWN_POINTS; }
+// Cards counted within the current level. Troll unlocks use level-2-local cards, while
+// the buff stats themselves carry over from level 1.
+function levelCards() { return level === 2 ? Math.max(0, buffsAwarded - CARDS_TO_LEVEL2) : buffsAwarded; }
 // Enemy HP in damage points, scaled off the default arrow damage.
 function enemyHp(typeKey) {
-  return ENEMY_TYPES[typeKey].hpScale * DEFAULT_DAMAGE;
+  return ALL_TYPES[typeKey].hpScale * DEFAULT_DAMAGE;
 }
-// A type is available once the player has taken its unlockCards upgrade cards.
+// A type is available once the player has taken its unlockCards upgrade cards this level.
 function spawnWeight(typeKey) {
-  return buffsAwarded >= ENEMY_TYPES[typeKey].unlockCards ? 1 : 0;
+  return levelCards() >= ALL_TYPES[typeKey].unlockCards ? 1 : 0;
 }
 // Shared by player and enemies so speedScale stays a true fraction of player
 // speed on the same terrain. Otherwise enemies outpace a grass-slowed player.
@@ -161,8 +203,8 @@ function terrainMult(tileId) {
   if (tileId === TILES.GRASS) return GRASS_SPEED_MULT;
   return 1.0;
 }
-function enemyStepDuration(type, destTileId) {
-  return Math.round((DEFAULT_MOVE_DURATION_MS / terrainMult(destTileId)) / ENEMY_TYPES[type].speedScale);
+function enemyStepDuration(type, x, y) {
+  return Math.round((DEFAULT_MOVE_DURATION_MS / cellSpeedMult(x, y)) / ALL_TYPES[type].speedScale);
 }
 
 // Each ranger is multipliers off the stat defaults. bars are 1-3 ratings for the
@@ -230,10 +272,16 @@ window.addEventListener("keydown", unlockAudio);
 // World state
 // ---------------------------------------------------------------------------
 
+// Which level is active (1 = grass/knights, 2 = cave/trolls) and when it began, so
+// the spawn ramp restarts at level 2 while buffs and kills carry over.
+let level = 1;
+let levelStartedAt = 0;
+
 const state = {
   running: false,
   paused: false,
   choosingBuff: false,
+  transitioning: false,
   startedAt: 0,
   kills: 0,
   maxLives: DEFAULT_HEALTH,
@@ -261,6 +309,29 @@ const state = {
 };
 
 // The tile-world core and buildStartingMap live in mapgen.js (imported above).
+
+// ---------------------------------------------------------------------------
+// Level-aware tile queries. Level 1 reads the mapgen tileMap; level 2 reads the cave
+// terrain grid (level2.js). Movement, projectiles, pathfinding and rendering all go
+// through these so the rest of the game doesn't branch on the level.
+// ---------------------------------------------------------------------------
+function cellSolid(x, y) {
+  if (x < 0 || x >= MAP_COLS || y < 0 || y >= MAP_ROWS) return true;
+  if (level === 2) return l2Solid(x, y);
+  return isSolid(state.tileMap[y][x]) || isFortAt(x, y);
+}
+function cellBlocksProjectile(x, y) {
+  if (x < 0 || x >= MAP_COLS || y < 0 || y >= MAP_ROWS) return true;
+  if (level === 2) return l2BlocksProjectile(x, y);
+  return blocksProjectile(state.tileMap[y][x]) || isFortAt(x, y);
+}
+function cellSpeedMult(x, y) {
+  if (level === 2) return l2SpeedMult(x, y);
+  const t = state.tileMap[y][x];
+  if (t === TILES.PATH) return PATH_SPEED_MULT;
+  if (t === TILES.GRASS) return GRASS_SPEED_MULT;
+  return 1.0;
+}
 
 // ---------------------------------------------------------------------------
 // Sprite loading
@@ -448,6 +519,7 @@ function shiftTimers(delta) {
 }
 
 function togglePause() {
+  if (state.transitioning) return; // ignore pause while fading between levels
   if (state.paused) {
     shiftTimers(performance.now() - pausedAt);
     state.paused = false;
@@ -510,23 +582,17 @@ function queueMove(dx, dy) {
   const nx = p.x + dx;
   const ny = p.y + dy;
   if (nx < 0 || nx >= MAP_COLS || ny < 0 || ny >= MAP_ROWS) return false;
-  if (isSolid(state.tileMap[ny][nx])) return false;
-  if (isFortAt(nx, ny)) return false;
+  if (cellSolid(nx, ny)) return false;
   if (isEnemyAt(nx, ny)) return false;
   // Block diagonal squeezes: if both cardinal neighbors are solid, no diagonal.
   if (dx !== 0 && dy !== 0) {
-    const sideA = state.tileMap[p.y][nx];
-    const sideB = state.tileMap[ny][p.x];
-    const sideABlocked = isSolid(sideA) || isFortAt(nx, p.y);
-    const sideBBlocked = isSolid(sideB) || isFortAt(p.x, ny);
+    const sideABlocked = cellSolid(nx, p.y);
+    const sideBBlocked = cellSolid(p.x, ny);
     if (sideABlocked && sideBBlocked) return false;
   }
 
   // Facing follows the mouse cursor (updateFacingFromAim), not the move direction.
-  const destTile = state.tileMap[ny][nx];
-  let mult = 1.0;
-  if (destTile === TILES.PATH) mult = PATH_SPEED_MULT;
-  else if (destTile === TILES.GRASS) mult = GRASS_SPEED_MULT;
+  const mult = cellSpeedMult(nx, ny);
   let duration = PLAYER_MOVE_DURATION_MS / mult / playerSpeedMult;
   if (dx !== 0 && dy !== 0) duration *= DIAG_DURATION_FACTOR;
 
@@ -612,8 +678,7 @@ function stepProjectiles(now) {
     const tx = Math.floor(p.px / TILE_SIZE);
     const ty = Math.floor(p.py / TILE_SIZE);
     if (tx < 0 || tx >= MAP_COLS || ty < 0 || ty >= MAP_ROWS) continue;
-    if (blocksProjectile(state.tileMap[ty][tx])) continue;
-    if (isFortAt(tx, ty)) continue;
+    if (cellBlocksProjectile(tx, ty)) continue;
     if (p.traveled >= playerArrowRange * TILE_SIZE) continue;
     remaining.push(p);
   }
@@ -632,11 +697,14 @@ let flowGoalX = -1;
 let flowGoalY = -1;
 let flowMap = null;
 function goalFlowField(goalX, goalY) {
-  if (flowField === null || goalX !== flowGoalX || goalY !== flowGoalY || flowMap !== state.tileMap) {
-    flowField = buildFlowField(goalX, goalY, state.tileMap);
+  const mapRef = level === 2 ? l2Grid() : state.tileMap;
+  if (flowField === null || goalX !== flowGoalX || goalY !== flowGoalY || flowMap !== mapRef) {
+    flowField = level === 2
+      ? buildFlowField(goalX, goalY, null, (x, y) => l2Solid(x, y))
+      : buildFlowField(goalX, goalY, state.tileMap);
     flowGoalX = goalX;
     flowGoalY = goalY;
-    flowMap = state.tileMap;
+    flowMap = mapRef;
   }
   return flowField;
 }
@@ -647,12 +715,12 @@ function targetEnemyCount(elapsed) {
 }
 
 function spawnEnemyAt(fort, now) {
-  // Weighted pick across unlocked types (see spawnWeight).
-  const keys = Object.keys(ENEMY_TYPES);
+  // Weighted pick across the current level's unlocked types (see spawnWeight).
+  const keys = levelTypes();
   const weights = keys.map((k) => spawnWeight(k));
   const total = weights.reduce((s, w) => s + w, 0);
   let r = Math.random() * total;
-  let typeKey = "enemy_one";
+  let typeKey = keys[0];
   for (let i = 0; i < keys.length; i++) {
     r -= weights[i];
     if (r <= 0) { typeKey = keys[i]; break; }
@@ -682,11 +750,12 @@ function spawnEnemyAt(fort, now) {
 
 function maybeSpawnEnemy(now) {
   if (now - state.lastSpawnAt < SPAWN_INTERVAL_MS) return;
-  const elapsed = now - state.startedAt;
+  // Relative to when this level began, so level 2's ramp restarts (sparse then builds).
+  const elapsed = now - levelStartedAt;
   const deficit = targetEnemyCount(elapsed) - state.enemies.length;
   if (deficit <= 0) return;
-  // Spawn only on forts no enemy occupies, so two never stack on one tile.
-  const openForts = SPAWN_POINTS.filter((s) => !isEnemyAt(s.x, s.y));
+  // Spawn only on this level's points that no enemy occupies (never stack on a tile).
+  const openForts = levelSpawns().filter((s) => !isEnemyAt(s.x, s.y));
   if (openForts.length === 0) return;
   // Top up toward the target. The batch grows late game so the board can refill
   // faster than a strong build clears it. Shuffle so the batch uses distinct forts.
@@ -713,7 +782,7 @@ function stepEnemies(now) {
   const field = goalFlowField(goalX, goalY);
   for (const enemy of state.enemies) {
     if (enemy.dying) continue;
-    const type = ENEMY_TYPES[enemy.type];
+    const type = ALL_TYPES[enemy.type];
 
     if (now < enemy.hurtUntil) { enemy.moving = false; continue; }
 
@@ -750,7 +819,7 @@ function stepEnemies(now) {
     enemy.toY = next.y;
     if (next.x > enemy.x) enemy.facing = "right";
     else if (next.x < enemy.x) enemy.facing = "left";
-    enemy.moveDuration = enemyStepDuration(enemy.type, state.tileMap[next.y][next.x]);
+    enemy.moveDuration = enemyStepDuration(enemy.type, next.x, next.y);
     enemy.moveStartAt = now;
     enemy.moving = true;
   }
@@ -975,7 +1044,7 @@ function renderEnemies(now) {
   ctx.imageSmoothingEnabled = true; // smooth the downscaled character sheets
 
   for (const enemy of state.enemies) {
-    const type = ENEMY_TYPES[enemy.type];
+    const type = ALL_TYPES[enemy.type];
     let px, py;
     if (enemy.dying) {
       px = enemy.deathX; // frozen where it died, mid-tile if it was moving
@@ -1009,8 +1078,7 @@ function renderEnemies(now) {
       frameIndex = Math.min(ANIM_FRAMES - 1, Math.floor((now - enemy.attackStart) / stepMs));
     } else {
       if (enemy.moving) {
-        const destTile = state.tileMap[enemy.toY][enemy.toX];
-        desired = destTile === TILES.PATH ? "RUN" : "WALK";
+        desired = cellSpeedMult(enemy.toX, enemy.toY) > 1.0 ? "RUN" : "WALK";
       } else {
         desired = "IDLE";
       }
@@ -1054,8 +1122,7 @@ function renderPlayer(now) {
   } else if (now < playerAttackUntil) {
     desired = "ATTACK";
   } else if (p.moving) {
-    const destTile = state.tileMap[p.toY][p.toX];
-    desired = destTile === TILES.PATH ? "RUN" : "WALK";
+    desired = cellSpeedMult(p.toX, p.toY) > 1.0 ? "RUN" : "WALK";
   } else {
     desired = "IDLE";
   }
@@ -1076,8 +1143,15 @@ function renderPlayer(now) {
 function render(now) {
   ctx.fillStyle = "#000";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
-  renderTiles();
-  renderSpawnMarkers();
+  if (level === 2) {
+    // Level 2's whole map (floor, water froth, lava char, paths, stalagmites, border)
+    // is pre-rendered to an offscreen canvas when the level loads, so we just blit it.
+    const bg = l2Background();
+    if (bg) { ctx.imageSmoothingEnabled = false; ctx.drawImage(bg, 0, 0); }
+  } else {
+    renderTiles();
+    renderSpawnMarkers();
+  }
   renderEnemies(now);
   renderPlayer(now);
   renderProjectiles(); // above the characters, so arrows never show through them
@@ -1104,11 +1178,103 @@ function renderDamageVignette(now) {
 // The header HUD (hearts, kills, timer) lives in hud.js (imported above).
 
 // ---------------------------------------------------------------------------
+// Level transition (level 1 -> level 2): the screen pixelates to black over 4s,
+// then level 2 pixelates in over another 4s. Gameplay is frozen for the whole 8s,
+// and the cave is generated during the fade-out so the wait is hidden.
+// ---------------------------------------------------------------------------
+const TRANSITION_MS = 4000;
+let transition = null; // { phase: "out" | "in", startAt, snap }
+const pixelScratch = document.createElement("canvas");
+
+// Draw `src` into the main canvas pixelated by `amount` (0 = crisp, 1 = coarse blocks)
+// and darkened toward black by the same amount.
+function drawPixelated(src, amount) {
+  const block = 1 + Math.round(amount * 40);
+  const sw = Math.max(1, Math.round(canvas.width / block));
+  const sh = Math.max(1, Math.round(canvas.height / block));
+  pixelScratch.width = sw; pixelScratch.height = sh;
+  const pctx = pixelScratch.getContext("2d");
+  pctx.imageSmoothingEnabled = false;
+  pctx.clearRect(0, 0, sw, sh);
+  pctx.drawImage(src, 0, 0, sw, sh);
+  ctx.imageSmoothingEnabled = false;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(pixelScratch, 0, 0, sw, sh, 0, 0, canvas.width, canvas.height);
+  if (amount > 0) { ctx.fillStyle = `rgba(0,0,0,${amount})`; ctx.fillRect(0, 0, canvas.width, canvas.height); }
+}
+
+function snapshotCanvas() {
+  const snap = document.createElement("canvas");
+  snap.width = canvas.width; snap.height = canvas.height;
+  snap.getContext("2d").drawImage(canvas, 0, 0);
+  return snap;
+}
+
+function startLevelTransition(now) {
+  state.transitioning = true;
+  mouseDown = false;
+  heldMoveKeys.clear();
+  pendingShot = null;
+  render(now); // snapshot the current (level 1) scene
+  transition = { phase: "out", startAt: now, snap: snapshotCanvas() };
+  generateLevel2(sprites); // build the cave map + background while the screen fades out
+}
+
+// Drop the player into the middle of level 2. Kills and buffs carry over; enemies,
+// projectiles and the spawn clock reset.
+function enterLevelTwo(now) {
+  level = 2;
+  state.enemies = [];
+  state.projectiles = [];
+  pendingShot = null;
+  state.player = {
+    x: PLAYER_START_X, y: PLAYER_START_Y, facing: "right",
+    moving: false, moveStartAt: 0, moveDuration: 0,
+    fromX: PLAYER_START_X, fromY: PLAYER_START_Y, toX: PLAYER_START_X, toY: PLAYER_START_Y,
+    anim: "IDLE", animStart: now, dying: false, deathStart: 0,
+  };
+  playerAttackUntil = 0;
+  playerHurtUntil = 0;
+  damageFlashUntil = 0;
+  lastArrowFiredAt = -DEFAULT_ATTACK_INTERVAL_MS;
+  flowField = null; // rebuild the flow field for the cave grid
+  playGameMusic(2); // level 2 plays its own randomized playlist
+}
+
+function renderTransition(now) {
+  const t = Math.min(1, (now - transition.startAt) / TRANSITION_MS);
+  if (transition.phase === "out") {
+    drawPixelated(transition.snap, t);
+    if (t >= 1) {
+      enterLevelTwo(now);
+      render(now); // draw the initial cave frame, then snapshot it to pixelate in
+      transition = { phase: "in", startAt: now, snap: snapshotCanvas() };
+    }
+  } else {
+    drawPixelated(transition.snap, 1 - t);
+    if (t >= 1) {
+      const p = performance.now();
+      levelStartedAt = p; // restart the spawn ramp from the moment play resumes
+      state.lastSpawnAt = p;
+      state.transitioning = false;
+      transition = null;
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Game loop
 // ---------------------------------------------------------------------------
 
 function loop(now) {
   if (!state.running || state.paused || state.choosingBuff) return;
+  if (state.transitioning) { renderTransition(now); requestAnimationFrame(loop); return; }
+  // Level 1 ends the moment the 8th upgrade card has been taken: fade into level 2.
+  if (level === 1 && buffsAwarded >= CARDS_TO_LEVEL2 && !state.player.dying) {
+    startLevelTransition(now);
+    requestAnimationFrame(loop);
+    return;
+  }
   try {
     if (state.player.dying) {
       // Only the death animation advances, then go to the retry screen.
@@ -1142,9 +1308,10 @@ function start() {
   resetState();
   state.running = true;
   state.paused = false;
-  playGameMusic();
+  playGameMusic(1);
   state.startedAt = performance.now();
   state.lastSpawnAt = state.startedAt;
+  levelStartedAt = state.startedAt;
   startGameSession();
   resetScoreForm(false);
   overlay.classList.add("hidden");
@@ -1154,6 +1321,9 @@ function start() {
 
 function resetState() {
   const ranger = rangerStats(selectedArcher);
+  level = 1;
+  state.transitioning = false;
+  transition = null;
   state.kills = 0;
   state.maxLives = ranger.hearts;
   state.lives = ranger.hearts;

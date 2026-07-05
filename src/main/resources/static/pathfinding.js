@@ -7,7 +7,9 @@ import { MAP_COLS, MAP_ROWS, isSolid, isFortAt } from "./mapgen.js";
 // Step-distance from (goalX, goalY) over walkable, non-fort tiles. Path cost is
 // uniform (every step is 1), so this is the true shortest-path distance on the grid,
 // computed once for all enemies. Flat array indexed y*MAP_COLS+x; -1 = unreachable.
-export function buildFlowField(goalX, goalY, tileMap) {
+// An optional isBlocked(x, y) predicate overrides the level-1 solid/fort test, so
+// level 2 (the cave) can supply its own terrain rules while reusing this search.
+export function buildFlowField(goalX, goalY, tileMap, isBlocked) {
   const dist = new Array(MAP_COLS * MAP_ROWS).fill(-1);
   const k = (x, y) => y * MAP_COLS + x;
   dist[k(goalX, goalY)] = 0;
@@ -20,8 +22,12 @@ export function buildFlowField(goalX, goalY, tileMap) {
       const nx = cx + dx, ny = cy + dy;
       if (nx < 0 || nx >= MAP_COLS || ny < 0 || ny >= MAP_ROWS) continue;
       if (dist[k(nx, ny)] !== -1) continue;
-      if (isSolid(tileMap[ny][nx])) continue;
-      if (isFortAt(nx, ny)) continue;
+      if (isBlocked) {
+        if (isBlocked(nx, ny)) continue;
+      } else {
+        if (isSolid(tileMap[ny][nx])) continue;
+        if (isFortAt(nx, ny)) continue;
+      }
       dist[k(nx, ny)] = d + 1;
       queue.push([nx, ny]);
     }

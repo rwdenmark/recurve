@@ -13,59 +13,67 @@ let sfxVolume = 0.25;
 let sfxMuted = false;
 export let musicMode = "none";   // "menu" | "game" | "none"
 
-const menuMusic = new Audio("audio/menu.mp3");
+const menuMusic = new Audio("level_one/audio/menu.mp3");
 menuMusic.loop = true;
-// preload "none" so the ~7MB of game tracks download on Start, not at page load.
-// The menu track stays eager so it never gaps when the menu opens.
-const gameTracks = ["audio/game1.mp3", "audio/game2.mp3", "audio/game3.mp3"].map((src) => {
-  const a = new Audio(src);
-  a.preload = "none";
-  return a;
-});
-let currentGameTrack = 0;
-// Loop the in-game playlist: when one track ends, start the next.
-gameTracks.forEach((a, i) => {
-  a.addEventListener("ended", () => {
-    if (musicMode !== "game") return;
-    currentGameTrack = (i + 1) % gameTracks.length;
-    const next = gameTracks[currentGameTrack];
-    next.currentTime = 0;
-    next.volume = effectiveVolume();
-    next.play().catch(() => {});
-  });
-});
 
 // The tracks are loud, so the slider value is scaled down by this.
 const MUSIC_GAIN = 0.1;
 function effectiveVolume() { return musicMuted ? 0 : musicVolume * MUSIC_GAIN; }
 function effectiveSfxVolume() { return sfxMuted ? 0 : sfxVolume; }
+
+// Each level has its own looping game-music playlist. A "set" remembers which of its
+// tracks is current and loops within itself when a track ends. preload "none" so the
+// tracks download on Start, not at page load.
+function makeTrackSet(paths) {
+  const tracks = paths.map((src) => { const a = new Audio(src); a.preload = "none"; return a; });
+  const set = { tracks, idx: 0 };
+  tracks.forEach((a, i) => {
+    a.addEventListener("ended", () => {
+      if (musicMode !== "game" || activeSet !== set) return;
+      set.idx = (i + 1) % tracks.length;
+      const next = tracks[set.idx];
+      next.currentTime = 0;
+      next.volume = effectiveVolume();
+      next.play().catch(() => {});
+    });
+  });
+  return set;
+}
+const gameSetL1 = makeTrackSet(["level_one/audio/game1.mp3", "level_one/audio/game2.mp3", "level_one/audio/game3.mp3"]);
+const gameSetL2 = makeTrackSet(["level_two/audio/game1.mp3", "level_two/audio/game2.mp3", "level_two/audio/game3.mp3"]);
+const ALL_SETS = [gameSetL1, gameSetL2];
+let activeSet = gameSetL1;
+
 function applyVolume() {
   const v = effectiveVolume();
   menuMusic.volume = v;
-  for (const a of gameTracks) a.volume = v;
+  for (const s of ALL_SETS) for (const a of s.tracks) a.volume = v;
 }
 export function playMenuMusic() {
   musicMode = "menu";
-  for (const a of gameTracks) a.pause();
+  for (const s of ALL_SETS) for (const a of s.tracks) a.pause();
   menuMusic.volume = effectiveVolume();
   menuMusic.play().catch(() => {});
 }
-export function playGameMusic() {
+// Start the game playlist for the given level on a random track, so the music varies
+// between runs and each level plays its own set of songs.
+export function playGameMusic(level = 1) {
   musicMode = "game";
   menuMusic.pause();
-  // Start on a random track each run so the in-game music varies between games.
-  currentGameTrack = Math.floor(Math.random() * gameTracks.length);
-  const a = gameTracks[currentGameTrack];
+  for (const s of ALL_SETS) for (const a of s.tracks) a.pause();
+  activeSet = level === 2 ? gameSetL2 : gameSetL1;
+  activeSet.idx = Math.floor(Math.random() * activeSet.tracks.length);
+  const a = activeSet.tracks[activeSet.idx];
   a.currentTime = 0;
   a.volume = effectiveVolume();
   a.play().catch(() => {});
 }
 export function pauseMusic() {
   menuMusic.pause();
-  for (const a of gameTracks) a.pause();
+  for (const s of ALL_SETS) for (const a of s.tracks) a.pause();
 }
 export function resumeMusic() {
-  if (musicMode === "game") gameTracks[currentGameTrack].play().catch(() => {});
+  if (musicMode === "game") activeSet.tracks[activeSet.idx].play().catch(() => {});
   else if (musicMode === "menu") menuMusic.play().catch(() => {});
 }
 function updateMuteIcon() {
@@ -99,7 +107,7 @@ updateMuteIcon();
 
 // Sound effects via Web Audio, not HTMLAudio. A decoded buffer fires with far
 // less latency, so the bow twang stays in sync with the arrow.
-const SFX_PATHS = { bow: "audio/bow_release.mp3", hurt: "audio/male_hurt.mp3", select: "audio/card_select.mp3" };
+const SFX_PATHS = { bow: "level_one/audio/bow_release.mp3", hurt: "level_one/audio/male_hurt.mp3", select: "level_one/audio/card_select.mp3" };
 const SFX_GAIN = 0.25;
 let audioCtx = null;
 const sfxBuffers = {};

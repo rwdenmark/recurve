@@ -66,7 +66,11 @@ public class ScoreController {
         if (submission.durationSeconds() > elapsedSeconds + CLOCK_SKEW_SECONDS) {
             return rejected();
         }
-        if (submission.kills() > SpawnModel.maxKills(submission.durationSeconds()) + KILL_SLACK) {
+        // A full run now spans two levels (grass then cave), and each level runs its own
+        // spawn ramp, so a run can produce well beyond a single ramp's worth of kills.
+        // Loosened for now to two levels' worth (2x the single-level bound) plus slack;
+        // replace with a proper two-phase spawn model when we revisit anti-cheat.
+        if (submission.kills() > SpawnModel.maxKills(submission.durationSeconds()) * 2 + KILL_SLACK) {
             return rejected();
         }
         // Trimmed once here so the filter and the stored row see the same name.
