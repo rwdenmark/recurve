@@ -6,6 +6,7 @@
 // pause bookkeeping it can't do itself.
 
 import { renderHearts } from "./hud.js";
+import { shuffleInPlace } from "./shuffle.js";
 
 // ---------------------------------------------------------------------------
 // Stat defaults. Rangers and enemies are defined as multiples of these, so
@@ -73,10 +74,7 @@ function pickBuffCards(n, s) {
   // its end, instead of being offered a free heal every threshold forever.
   const others = pool.filter((c) => c.title !== "Heal to Full");
   const finalPool = others.length === 0 ? others : pool;
-  for (let i = finalPool.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [finalPool[i], finalPool[j]] = [finalPool[j], finalPool[i]];
-  }
+  shuffleInPlace(finalPool);
   return finalPool.slice(0, Math.min(n, finalPool.length));
 }
 

@@ -32,20 +32,10 @@ public class GameSessionController {
 
     @PostMapping("/start")
     public ResponseEntity<?> start(HttpServletRequest request) {
-        if (!rateLimiter.allow(clientKey(request))) {
+        if (!rateLimiter.allow(ClientKey.from(request))) {
             return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
                     .body(Map.of("message", "Too many game starts. Try again shortly."));
         }
         return ResponseEntity.ok(Map.of("sessionId", sessions.start()));
-    }
-
-    private String clientKey(HttpServletRequest request) {
-        String forwarded = request.getHeader("X-Forwarded-For");
-        if (forwarded != null && !forwarded.isBlank()) {
-            // First hop is the client behind a proxy. Client-settable, so it only
-            // stops casual spam, not a caller who rotates the header.
-            return forwarded.split(",")[0].trim();
-        }
-        return request.getRemoteAddr();
     }
 }

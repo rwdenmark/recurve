@@ -1,4 +1,4 @@
-// Tests for the BFS flow field used for enemy pathfinding. Run with `node --test`.
+// Tests for the weighted (Dijkstra) flow field used for enemy pathfinding. Run with `node --test`.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";

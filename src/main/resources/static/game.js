@@ -8,6 +8,7 @@ import {
   MAP_COLS, MAP_ROWS, PLAYER_START_X, PLAYER_START_Y,
   TILES, isSolid, isFortAt, SPAWN_POINTS, buildStartingMap,
 } from "./mapgen.js";
+import { shuffleInPlace } from "./shuffle.js";
 import { buildFlowField, nextStepFromField } from "./pathfinding.js";
 import {
   musicMode, playMenuMusic, playGameMusic, pauseMusic, resumeMusic,
@@ -51,8 +52,8 @@ const SPRITE_PATHS = {
   troll:  "level_two/troll_anim.png",
   troll2: "level_two/troll2_anim.png",
   troll3: "level_two/troll3_anim.png",
-  caveSheet: "level_two/cave.png",       // floor + scatter tiles (16px grid)
-  caveWater: "level_two/water.png",      // flat deep-water colour
+  caveSheet: "level_two/cave.png",       // floor tiles (16px grid)
+  caveWater: "level_two/water.png",      // flat deep-water color
   caveLava:  "level_two/lava.png",       // molten lava texture
   cavePath:  "level_two/path.png",       // dark-packed dirt path tile
   caveObjects: "level_two/objects.png",  // 5x3 grid of 48px rock and mineral sprites
@@ -75,8 +76,8 @@ const ANIM_FRAMES = 10;
 const ARCHER_CELL = { sheet: "archer", w: 277, h: 240, ax: 88.1, ay: 216.1, scale: 0.27 };
 // Player skins (cosmetic). All three share ARCHER_CELL's geometry.
 const ARCHER_SHEETS = ["archer", "archer2", "archer3"];
-let selectedArcher = 0;
-function playerCell() { return { ...ARCHER_CELL, sheet: ARCHER_SHEETS[selectedArcher] }; }
+let selectedRanger = 0;
+function playerCell() { return { ...ARCHER_CELL, sheet: ARCHER_SHEETS[selectedRanger] }; }
 // ax is each knight body's pixel-mass centroid (not bbox center) so the weapon
 // overhangs instead of pulling the body off its tile.
 const KNIGHT_CELL  = { sheet: "knight",  w: 350, h: 240, ax: 141.9, ay: 235.5, scale: 0.2109 };
@@ -85,12 +86,10 @@ const KNIGHT3_CELL = { sheet: "knight3", w: 350, h: 240, ax: 147.4, ay: 235.5, s
 // Troll enemy sheets, packed from the CraftPix troll frames into the same 6-row
 // (idle/walk/run/attack/hurt/die) x 10-frame layout as the knights. ax is each troll's
 // horizontal pixel-mass centroid and ay its feet baseline, so it anchors to its tile
-// like the other characters. Scale matches the knights for now; tune per enemy type
-// when the spawn logic is wired up.
-// Scale is tuned per troll so the idle body renders the same ~44px height as the
-// knights, filling the tile. The trolls need a larger scale than the knights because
-// their wide club-swing attack frames inflated the packed cell, leaving the idle body
-// smaller inside it.
+// like the other characters. Scale is tuned per troll so the idle body renders the
+// same ~44px height as the knights. The trolls need a larger scale because their wide
+// club-swing attack frames inflated the packed cell, leaving the idle body smaller
+// inside it.
 const TROLL_CELL  = { sheet: "troll",  w: 307, h: 240, ax: 120.9, ay: 235.0, scale: 0.2958 };
 const TROLL2_CELL = { sheet: "troll2", w: 305, h: 240, ax: 120.0, ay: 232.0, scale: 0.2900 };
 const TROLL3_CELL = { sheet: "troll3", w: 301, h: 240, ax: 122.5, ay: 236.0, scale: 0.2721 };
@@ -130,8 +129,8 @@ const MAX_ENEMIES_PER_CYCLE = 40;
 
 // Spawning tops up toward a target population on a timer, both driven by cards taken. The
 // target grows a flat amount per card, and the interval shortens per card down to a floor,
-// which is the real swarm lever: only the few fort tiles can spawn, so a tick can place at
-// most that many enemies no matter how big the target gets. See the AskUserQuestion design.
+// which is the real swarm lever. Only the few fort tiles can spawn, so a tick can place at
+// most that many enemies no matter how big the target gets.
 const SPAWN_INTERVAL_BASE = 600;    // ms between top-ups at the start of a run
 const SPAWN_INTERVAL_FLOOR = 175;   // fastest top-up once enough cards are in
 const SPAWN_INTERVAL_PER_CARD = 25; // interval shortens this much per card taken
@@ -140,8 +139,6 @@ const SPAWN_TARGET_PER_CARD = 3;    // target grows this much per card, uncapped
 
 const ARROW_SPEED = TILE_SIZE / 50; // travel speed in px/ms (one tile per 50ms)
 
-// The stat defaults (DEFAULT_HEALTH and friends) live in buffs.js with the
-// run's live buff values (imported above).
 const PLAYER_MOVE_DURATION_MS = DEFAULT_MOVE_DURATION_MS;
 const PATH_SPEED_MULT  = 1.15;  // path tiles run faster
 const GRASS_SPEED_MULT = 0.85;  // grass slower
@@ -205,19 +202,12 @@ function enemyHp(typeKey) {
 function spawnWeight(typeKey) {
   return levelCards() >= ALL_TYPES[typeKey].unlockCards ? 1 : 0;
 }
-// Shared by player and enemies so speedScale stays a true fraction of player
-// speed on the same terrain. Otherwise enemies outpace a grass-slowed player.
-function terrainMult(tileId) {
-  if (tileId === TILES.PATH) return PATH_SPEED_MULT;
-  if (tileId === TILES.GRASS) return GRASS_SPEED_MULT;
-  return 1.0;
-}
 // Effective speed fraction for a type this cycle: base speedScale plus the per-cycle bump.
 function enemySpeedScale(typeKey) {
   return ALL_TYPES[typeKey].speedScale + cycle * CYCLE_SPEED_STEP;
 }
-function enemyStepDuration(type, x, y) {
-  return Math.round((DEFAULT_MOVE_DURATION_MS / cellSpeedMult(x, y)) / enemySpeedScale(type));
+function enemyStepDuration(typeKey, x, y) {
+  return Math.round((DEFAULT_MOVE_DURATION_MS / cellSpeedMult(x, y)) / enemySpeedScale(typeKey));
 }
 
 // Each ranger is multipliers off the stat defaults. bars are 1-3 ratings for the
@@ -256,13 +246,10 @@ canvas.style.height = `${canvas.height * DISPLAY_SCALE}px`;
 const ctx = canvas.getContext("2d");
 ctx.imageSmoothingEnabled = false;
 
-// The header HUD elements live in hud.js, the score form and leaderboard in net.js.
 const overlay = document.getElementById("overlay");
 const overlayTitle = document.getElementById("overlay-title");
 const overlayText = document.getElementById("overlay-text");
 const overlayButton = document.getElementById("overlay-button");
-
-// Music and SFX live in audio.js (imported above).
 
 const DAMAGE_FLASH_MS = 900;
 let damageFlashUntil = 0;
@@ -284,15 +271,13 @@ function unlockAudio() {
 window.addEventListener("pointerdown", unlockAudio);
 window.addEventListener("keydown", unlockAudio);
 
-// The leaderboard, score form, and score submission live in net.js (imported above).
-
 // ---------------------------------------------------------------------------
 // World state
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
 // Level configuration.
-// START_LEVEL: which level a run boots into. 1 = normal play (start on level 1; the fade
+// START_LEVEL: which level a run boots into. 1 = normal play (start on level 1, the fade
 // transition then carries you to later levels). Set to 2, 3, ... to jump straight into a
 // level for design work, skipping the earlier ones and the transition.
 // To ADD a level to the loop: bump LEVEL_COUNT, add its enemy types to LEVEL_TYPES and
@@ -307,20 +292,30 @@ const CARDS_PER_LEVEL = 10;            // upgrade cards taken within a level bef
 // (cycle 0 = base stats), so each pass through the same level is tougher than the last.
 const CYCLE_HP_STEP = 10;
 const CYCLE_SPEED_STEP = 0.05;
-// Kills per upgrade card. The first cycle uses BUFF_EVERY_KILLS; every cycle after that
+// Kills per upgrade card. The first cycle uses BUFF_EVERY_KILLS. Every cycle after that
 // asks for more, so cards (and the buffs and level wraps they drive) come slower once the
 // enemies turn tanky.
 const KILLS_PER_CARD_LATER = 20;
 function killsPerCard() { return cycle === 0 ? BUFF_EVERY_KILLS : KILLS_PER_CARD_LATER; }
 
 // Which level is active (1 = grass/knights, 2 = cave/trolls), how many full loops have
-// been completed, when the level began (so the spawn ramp restarts each level), and the
-// buff count when it began (so per-level card unlocks reset while buffs still carry over).
+// been completed, and the buff count when the level began (so per-level card unlocks
+// reset while buffs still carry over).
 let level = 1;
 let cycle = 0;
-let levelStartedAt = 0;
 let levelCardBaseline = 0;
 let killCardBaseline = 0;      // kills the last upgrade card was awarded at (for pacing)
+
+// A fresh idle player on the center tile. Used at module init, run start, and on
+// entering a level.
+function freshPlayer(now) {
+  return {
+    x: PLAYER_START_X, y: PLAYER_START_Y, facing: "right",
+    moving: false, moveStartAt: 0, moveDuration: 0,
+    fromX: PLAYER_START_X, fromY: PLAYER_START_Y, toX: PLAYER_START_X, toY: PLAYER_START_Y,
+    anim: "IDLE", animStart: now, dying: false, deathStart: 0,
+  };
+}
 
 const state = {
   running: false,
@@ -331,32 +326,15 @@ const state = {
   kills: 0,
   maxLives: DEFAULT_HEALTH,
   lives: DEFAULT_HEALTH,
-  player: {
-    x: PLAYER_START_X,
-    y: PLAYER_START_Y,
-    facing: "right",
-    moving: false,
-    moveStartAt: 0,
-    moveDuration: 0,
-    fromX: PLAYER_START_X,
-    fromY: PLAYER_START_Y,
-    toX: PLAYER_START_X,
-    toY: PLAYER_START_Y,
-    anim: "IDLE",
-    animStart: 0,
-    dying: false,
-    deathStart: 0,
-  },
+  player: freshPlayer(0),
   enemies: [],
   projectiles: [],
   tileMap: buildStartingMap(),
   lastSpawnAt: 0,
 };
 
-// The tile-world core and buildStartingMap live in mapgen.js (imported above).
-
 // ---------------------------------------------------------------------------
-// Level-aware tile queries. Level 1 reads the mapgen tileMap; level 2 reads the cave
+// Level-aware tile queries. Level 1 reads the mapgen tileMap. Level 2 reads the cave
 // terrain grid (level2.js). Movement, projectiles, pathfinding and rendering all go
 // through these so the rest of the game doesn't branch on the level.
 // ---------------------------------------------------------------------------
@@ -370,6 +348,8 @@ function cellBlocksProjectile(x, y) {
   if (level === 2) return l2BlocksProjectile(x, y);
   return blocksProjectile(state.tileMap[y][x]) || isFortAt(x, y);
 }
+// Shared by player and enemies so enemy speedScale stays a true fraction of player
+// speed on the same terrain. Otherwise enemies outpace a grass-slowed player.
 function cellSpeedMult(x, y) {
   if (level === 2) return l2SpeedMult(x, y);
   const t = state.tileMap[y][x];
@@ -456,7 +436,7 @@ const MOVE_KEYS = { KeyW: "up", KeyA: "left", KeyS: "down", KeyD: "right" };
 let playerAttackUntil = 0;
 let playerHurtUntil = 0;
 let lastArrowFiredAt = -DEFAULT_ATTACK_INTERVAL_MS; // far in the past = ready to fire
-let lastOmniFireAt = 0;                             // when the last automatic omni volley fired
+let lastOmniFireAt = 0;
 // A shot triggered but whose arrow hasn't left the bow yet.
 let pendingShot = null;
 
@@ -522,7 +502,6 @@ function aimAngle() {
   return Math.atan2(mouseY - c.y, mouseX - c.x);
 }
 
-// Face the cursor: left of the archer faces left, right faces right.
 function updateFacingFromAim() {
   if (mouseX === null) return;
   const cx = playerCenterPx().x;
@@ -789,13 +768,11 @@ function goalFlowField(goalX, goalY) {
 
 // Performance safety cap, raised each cycle so later runs can still swarm.
 function maxEnemies() { return MAX_ENEMIES_BASE + MAX_ENEMIES_PER_CYCLE * cycle; }
-// Target on-screen enemy count: 6 plus 3 for every card taken across the whole run,
-// clamped only by the performance cap. Difficulty climbs forever with progress.
+// Clamped only by the performance cap, so difficulty climbs forever with progress.
 function targetEnemyCount() {
   return Math.min(maxEnemies(), SPAWN_TARGET_START + SPAWN_TARGET_PER_CARD * buffsAwarded);
 }
-// Top-up cadence tied to cards: 600ms at the start, shortening toward the floor as cards
-// pile up. This is what lets the board actually reach the high late-game targets.
+// The shrinking cadence is what lets the board reach the high late-game targets.
 function spawnIntervalMs() {
   return Math.max(SPAWN_INTERVAL_FLOOR, SPAWN_INTERVAL_BASE - SPAWN_INTERVAL_PER_CARD * buffsAwarded);
 }
@@ -846,10 +823,7 @@ function maybeSpawnEnemy(now) {
   // Shuffle so the batch uses distinct forts.
   const batch = 1 + Math.floor(buffsAwarded / 2);
   const count = Math.min(deficit, openForts.length, batch);
-  for (let i = openForts.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [openForts[i], openForts[j]] = [openForts[j], openForts[i]];
-  }
+  shuffleInPlace(openForts);
   for (let n = 0; n < count; n++) spawnEnemyAt(openForts[n], now);
   state.lastSpawnAt = now;
 }
@@ -1247,7 +1221,7 @@ function render(now) {
   ctx.fillStyle = "#000";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   if (level === 2) {
-    // Level 2's whole map (floor, water froth, lava char, paths, stalagmites, border)
+    // Level 2's whole map (floor, water froth, lava char, paths, rocks, border)
     // is pre-rendered to an offscreen canvas when the level loads, so we just blit it.
     const bg = l2Background();
     if (bg) { ctx.imageSmoothingEnabled = false; ctx.drawImage(bg, 0, 0); }
@@ -1277,8 +1251,6 @@ function renderDamageVignette(now) {
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 }
-
-// The header HUD (hearts, kills, timer) lives in hud.js (imported above).
 
 // ---------------------------------------------------------------------------
 // Level transition (level 1 -> level 2): the screen pixelates to black over 4s,
@@ -1326,7 +1298,7 @@ function startLevelTransition(now) {
   transition = { phase: "out", startAt: now, snap: snapshotCanvas(), next: nextLevel };
 }
 
-// Build the map for a level. Level 1 uses the mapgen tile grid; later levels build their
+// Build the map for a level. Level 1 uses the mapgen tile grid. Later levels build their
 // own. Add a branch here for each new level.
 function setupLevelMap(n) {
   if (n === 2) generateLevel2(sprites);
@@ -1342,16 +1314,11 @@ function enterLevel(n, now) {
   // goes through resetState), so this counts real loops.
   if (n === 1) cycle += 1;
   level = n;
-  levelCardBaseline = buffsAwarded; // per-level card unlocks reset; buffs still carry over
+  levelCardBaseline = buffsAwarded; // per-level card unlocks reset, buffs still carry over
   state.enemies = [];
   state.projectiles = [];
   pendingShot = null;
-  state.player = {
-    x: PLAYER_START_X, y: PLAYER_START_Y, facing: "right",
-    moving: false, moveStartAt: 0, moveDuration: 0,
-    fromX: PLAYER_START_X, fromY: PLAYER_START_Y, toX: PLAYER_START_X, toY: PLAYER_START_Y,
-    anim: "IDLE", animStart: now, dying: false, deathStart: 0,
-  };
+  state.player = freshPlayer(now);
   playerAttackUntil = 0;
   playerHurtUntil = 0;
   damageFlashUntil = 0;
@@ -1360,7 +1327,6 @@ function enterLevel(n, now) {
   lastOmniFireAt = now;   // omni volleys start fresh in the new level
   flowField = null;       // rebuild the flow field for the new map
   setupLevelMap(n);
-  levelStartedAt = now;
   state.lastSpawnAt = now;
   playGameMusic(n);       // each level plays its own randomized playlist
 }
@@ -1377,9 +1343,7 @@ function renderTransition(now) {
   } else {
     drawPixelated(transition.snap, 1 - t);
     if (t >= 1) {
-      const p = performance.now();
-      levelStartedAt = p; // restart the spawn ramp from the moment play resumes
-      state.lastSpawnAt = p;
+      state.lastSpawnAt = performance.now(); // spawn clock starts when play resumes
       state.transitioning = false;
       transition = null;
     }
@@ -1393,7 +1357,7 @@ function renderTransition(now) {
 function loop(now) {
   if (!state.running || state.paused || state.choosingBuff) return;
   if (state.transitioning) { renderTransition(now); requestAnimationFrame(loop); return; }
-  // A level ends once CARDS_PER_LEVEL cards have been taken in it; fade into the next one
+  // A level ends once CARDS_PER_LEVEL cards have been taken in it. Fade into the next one
   // (which loops back to level 1 forever, each wrap a harder cycle).
   if (!state.player.dying && levelCards() >= CARDS_PER_LEVEL) {
     startLevelTransition(now);
@@ -1439,7 +1403,6 @@ function start() {
   state.paused = false;
   state.startedAt = performance.now();
   state.lastSpawnAt = state.startedAt;
-  levelStartedAt = state.startedAt;
   startGameSession();
   resetScoreForm(false);
   overlay.classList.add("hidden");
@@ -1455,7 +1418,7 @@ function start() {
 }
 
 function resetState() {
-  const ranger = rangerStats(selectedArcher);
+  const ranger = rangerStats(selectedRanger);
   level = 1;
   cycle = 0;
   levelCardBaseline = 0;
@@ -1466,12 +1429,7 @@ function resetState() {
   state.maxLives = ranger.hearts;
   state.lives = ranger.hearts;
   state.choosingBuff = false;
-  state.player = {
-    x: PLAYER_START_X, y: PLAYER_START_Y, facing: "right",
-    moving: false, moveStartAt: 0, moveDuration: 0,
-    fromX: PLAYER_START_X, fromY: PLAYER_START_Y, toX: PLAYER_START_X, toY: PLAYER_START_Y,
-    anim: "IDLE", animStart: 0, dying: false, deathStart: 0,
-  };
+  state.player = freshPlayer(0);
   playerAttackUntil = 0;
   playerHurtUntil = 0;
   damageFlashUntil = 0;
@@ -1504,7 +1462,7 @@ const charCards = Array.from(document.querySelectorAll(".char-option")).map((opt
   option: opt,
   canvas: opt.querySelector(".char-card"),
   ctx: opt.querySelector(".char-card").getContext("2d"),
-  index: Number(opt.dataset.archer),
+  index: Number(opt.dataset.ranger),
 }));
 let charPreviewRAF = 0;
 
@@ -1513,7 +1471,7 @@ function buildStatBoxes() {
   for (const card of charCards) {
     const box = card.option.querySelector(".char-stats");
     box.innerHTML = Object.entries(RANGERS[card.index].bars).map(([label, rating]) => {
-      const pips = [0, 1, 2].map((i) => `<span class="pip ${i < rating ? "full" : "empty"}"></span>`).join("");
+      const pips = [0, 1, 2].map((i) => `<span class="pip${i < rating ? " full" : ""}"></span>`).join("");
       return `<div class="stat-row"><span class="stat-label">${label}</span><span class="pips">${pips}</span></div>`;
     }).join("");
   }
@@ -1521,15 +1479,15 @@ function buildStatBoxes() {
 
 // Reflect the selected ranger's hearts in the HUD while on the menu.
 function showRangerHud() {
-  const r = rangerStats(selectedArcher);
+  const r = rangerStats(selectedRanger);
   state.maxLives = r.hearts;
   state.lives = r.hearts;
   renderHearts(state);
 }
 
 try {
-  const saved = parseInt(localStorage.getItem("recurve.archer"), 10);
-  if (!Number.isNaN(saved) && saved >= 0 && saved < ARCHER_SHEETS.length) selectedArcher = saved;
+  const saved = parseInt(localStorage.getItem("recurve.ranger"), 10);
+  if (!Number.isNaN(saved) && saved >= 0 && saved < ARCHER_SHEETS.length) selectedRanger = saved;
 } catch (_) { /* localStorage may be disabled */ }
 
 // Tight pixel bounds of an archer's idle frame, so the preview centers on the
@@ -1586,7 +1544,7 @@ function drawCharCard(card, now) {
 function drawCharPreview(now) {
   for (const card of charCards) {
     drawCharCard(card, now);
-    card.option.classList.toggle("selected", card.index === selectedArcher);
+    card.option.classList.toggle("selected", card.index === selectedRanger);
   }
 }
 
@@ -1602,10 +1560,10 @@ function startCharPreviewLoop() {
 
 for (const card of charCards) {
   card.option.addEventListener("click", () => {
-    if (card.index !== selectedArcher) playSfx("select", 4); // only when switching
-    selectedArcher = card.index;
+    if (card.index !== selectedRanger) playSfx("select", 4); // only when switching
+    selectedRanger = card.index;
     showRangerHud();
-    try { localStorage.setItem("recurve.archer", String(selectedArcher)); } catch (_) { /* ignore */ }
+    try { localStorage.setItem("recurve.ranger", String(selectedRanger)); } catch (_) { /* ignore */ }
   });
 }
 

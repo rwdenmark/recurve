@@ -1,5 +1,7 @@
 // Pure tile-world model and map generation. No DOM, so it runs under a test runner.
 
+import { shuffleInPlace } from "./shuffle.js";
+
 export const MAP_COLS = 32;
 export const MAP_ROWS = 16;
 
@@ -50,19 +52,12 @@ export const WATER_MIN = 48, WATER_MAX = 72;
 export const TREE_MIN = 154, TREE_MAX = 178;
 const MAX_BUILD_ATTEMPTS = 80;
 
-function shuffleInPlace(arr, rng) {
-  for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(rng() * (i + 1));
-    [arr[i], arr[j]] = [arr[j], arr[i]];
-  }
-  return arr;
-}
-
 // An ordered, orthogonally-contiguous route from a spawn to the player. Biased
 // toward the center but allowed to bow sideways, so forts on a cardinal axis don't
-// all get an identical straight lane. Pure aside from the module's size/fort
-// constants, so it is unit-testable, and it always terminates at the center.
-export function wanderingRouteToCenter(sx, sy, rng = Math.random) {
+// all get an identical straight lane. Pure aside from the module's size constants,
+// so it is unit-testable, and it always terminates at the center. Level 2 reuses it
+// by passing its own fort test.
+export function wanderingRouteToCenter(sx, sy, rng = Math.random, isFort = isFortAt) {
   const cx = PLAYER_START_X, cy = PLAYER_START_Y;
   const inInterior = (x, y) => x >= 1 && x < MAP_COLS - 1 && y >= 1 && y < MAP_ROWS - 1;
   // Stay off the inner wall ring after the first step off the fort, so a route is
@@ -102,7 +97,7 @@ export function wanderingRouteToCenter(sx, sy, rng = Math.random) {
     let moved = false;
     for (const [dx, dy] of candidates) {
       const nx = x + dx, ny = y + dy;
-      if (!okStep(nx, ny) || isFortAt(nx, ny)) continue;
+      if (!okStep(nx, ny) || isFort(nx, ny)) continue;
       if (nx === px && ny === py) continue;            // no immediate backtrack
       px = x; py = y; x = nx; y = ny; route.push([x, y]); moved = true; break;
     }
@@ -111,7 +106,7 @@ export function wanderingRouteToCenter(sx, sy, rng = Math.random) {
       let done = false;
       for (const [dx, dy] of toward) {
         const nx = x + dx, ny = y + dy;
-        if (!okStep(nx, ny) || isFortAt(nx, ny)) continue;
+        if (!okStep(nx, ny) || isFort(nx, ny)) continue;
         px = x; py = y; x = nx; y = ny; route.push([x, y]); done = true; break;
       }
       if (!done) break;
@@ -125,9 +120,9 @@ export function wanderingRouteToCenter(sx, sy, rng = Math.random) {
     let nx = x, ny = y;
     if (dx !== 0 && (Math.abs(cx - x) >= Math.abs(cy - y) || dy === 0)) nx = x + dx;
     else ny = y + dy;
-    if (isFortAt(nx, ny)) {                            // sidestep a fort in the way
-      if (dy !== 0 && inInterior(x, y + dy) && !isFortAt(x, y + dy)) { nx = x; ny = y + dy; }
-      else if (dx !== 0 && inInterior(x + dx, y) && !isFortAt(x + dx, y)) { nx = x + dx; ny = y; }
+    if (isFort(nx, ny)) {                              // sidestep a fort in the way
+      if (dy !== 0 && inInterior(x, y + dy) && !isFort(x, y + dy)) { nx = x; ny = y + dy; }
+      else if (dx !== 0 && inInterior(x + dx, y) && !isFort(x + dx, y)) { nx = x + dx; ny = y; }
       else break;
     }
     x = nx; y = ny; route.push([x, y]);
@@ -574,10 +569,7 @@ function buildMapOnce() {
       if (obstacleSafe(x, y)) openGrass.push([x, y]);
     }
   }
-  for (let i = openGrass.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [openGrass[i], openGrass[j]] = [openGrass[j], openGrass[i]];
-  }
+  shuffleInPlace(openGrass);
   for (const [sx, sy] of openGrass) {
     if (treeTiles >= treeTarget) break;
     if (!obstacleSafe(sx, sy)) continue;

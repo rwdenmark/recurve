@@ -27,8 +27,8 @@ import java.util.Map;
 @RequestMapping("/api/scores")
 public class ScoreController {
 
-    // Slack on the spawn-model bound: durationSeconds is floored to whole seconds and
-    // tick timing jitters, so allow a little headroom (about the size of a full board).
+    // Slack on the spawn-model bound for tick timing jitter. The client floors
+    // durationSeconds, so the bound itself is computed on duration + 1.
     private static final int KILL_SLACK = 40;
     // The client's run clock can start slightly before the server creates the session
     // (request latency), so allow this much over the server-measured elapsed time.
@@ -52,7 +52,7 @@ public class ScoreController {
     @PostMapping
     public ResponseEntity<?> submit(@Valid @RequestBody ScoreSubmission submission,
                                     HttpServletRequest request) {
-        if (!rateLimiter.allow(clientKey(request))) {
+        if (!rateLimiter.allow(ClientKey.from(request))) {
             return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
                     .body(Map.of("message", "Too many submissions. Try again shortly."));
         }
@@ -66,11 +66,9 @@ public class ScoreController {
         if (submission.durationSeconds() > elapsedSeconds + CLOCK_SKEW_SECONDS) {
             return rejected();
         }
-        // A full run now spans two levels (grass then cave), and each level runs its own
-        // spawn ramp, so a run can produce well beyond a single ramp's worth of kills.
-        // Loosened for now to two levels' worth (2x the single-level bound) plus slack;
-        // replace with a proper two-phase spawn model when we revisit anti-cheat.
-        if (submission.kills() > SpawnModel.maxKills(submission.durationSeconds()) * 2 + KILL_SLACK) {
+        // The model spans the whole run (spawn pacing is card-driven, not per-level), so
+        // one bound covers every level and cycle. +1 covers the client's floored duration.
+        if (submission.kills() > SpawnModel.maxKills(submission.durationSeconds() + 1) + KILL_SLACK) {
             return rejected();
         }
         // Trimmed once here so the filter and the stored row see the same name.
@@ -120,15 +118,5 @@ public class ScoreController {
                 .stream()
                 .map(ScoreView::from)
                 .toList();
-    }
-
-    private String clientKey(HttpServletRequest request) {
-        String forwarded = request.getHeader("X-Forwarded-For");
-        if (forwarded != null && !forwarded.isBlank()) {
-            // First hop is the client behind a proxy. Client-settable, so it only
-            // stops casual spam, not a caller who rotates the header.
-            return forwarded.split(",")[0].trim();
-        }
-        return request.getRemoteAddr();
     }
 }

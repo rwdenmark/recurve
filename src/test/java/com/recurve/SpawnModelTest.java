@@ -21,13 +21,13 @@ class SpawnModelTest {
 
     @Test
     void pinnedValuesFreezeTheGameJsContract() {
-        // Hand-computed from the constants (600ms ticks, batch grows each minute).
-        // 60s is 100 ticks, 99 at batch 1 plus the minute tick at batch 2, so 101.
-        // 150s is 99 ticks at batch 1, 100 at batch 2, 51 at batch 3, so 99 + 200 + 153 gives 452.
-        // If these move, the spawn pacing changed and game.js must be re-synced.
+        // Computed from the card-driven schedule (600ms base interval shortening 25ms
+        // per card to a 175ms floor, batch 1 + cards/2 capped at 8, cards from kills).
+        // If these move, the spawn or card pacing changed and game.js must be re-synced.
         assertEquals(0, SpawnModel.maxKills(0));
-        assertEquals(101, SpawnModel.maxKills(60));
-        assertEquals(452, SpawnModel.maxKills(150));
+        assertEquals(298, SpawnModel.maxKills(30));
+        assertEquals(1666, SpawnModel.maxKills(60));
+        assertEquals(5778, SpawnModel.maxKills(150));
     }
 
     @Test
@@ -41,9 +41,9 @@ class SpawnModelTest {
     }
 
     @Test
-    void rateCapsAtTheFortCountLateGame() {
-        // Past ~7 minutes the per-tick batch caps at 8 forts, so a 60s window late game
-        // is 100 ticks of 8 = 800 kills.
-        assertEquals(800, SpawnModel.maxKills(600) - SpawnModel.maxKills(540));
+    void lateGameRateCapsAtTheSpawnPointCount() {
+        // Deep into a run the interval is pinned at the 175ms floor and the batch at
+        // 8 spawn points, so a late 60s window holds 343 ticks of 8.
+        assertEquals(2744, SpawnModel.maxKills(600) - SpawnModel.maxKills(540));
     }
 }

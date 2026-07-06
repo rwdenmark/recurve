@@ -7,14 +7,18 @@
 // level 1's tileMap. Pure of game state: game.js calls generateLevel2() then reads the
 // grid and background through the query functions below.
 
-import { MAP_COLS as COLS, MAP_ROWS as ROWS, PLAYER_START_X as CX, PLAYER_START_Y as CY } from "./mapgen.js";
+import {
+  MAP_COLS as COLS, MAP_ROWS as ROWS, PLAYER_START_X as CX, PLAYER_START_Y as CY,
+  wanderingRouteToCenter,
+} from "./mapgen.js";
+import { shuffleInPlace } from "./shuffle.js";
 
 const TILE = 48;
 const ART = 16;                 // art-resolution pixels per tile for the froth/char
 const AW = COLS * ART, AH = ROWS * ART;
 
 // Terrain codes stored in the grid.
-export const L2 = { FLOOR: 0, PATH: 1, WATER: 2, LAVA: 3, WALL: 4, STAL: 5 };
+export const L2 = { FLOOR: 0, PATH: 1, WATER: 2, LAVA: 3, WALL: 4, ROCK: 5 };
 
 // The six troll spawn points: the interior tile just in front of each border portal
 // (portals sit at cols 2,16,29 on the top and bottom rows).
@@ -39,12 +43,12 @@ export function l2Grid() { return grid; }
 export function l2Solid(x, y) {
   if (x < 0 || x >= COLS || y < 0 || y >= ROWS) return true;
   const t = grid[y][x];
-  return t === L2.WATER || t === L2.LAVA || t === L2.WALL || t === L2.STAL;
+  return t === L2.WATER || t === L2.LAVA || t === L2.WALL || t === L2.ROCK;
 }
 export function l2BlocksProjectile(x, y) {
   if (x < 0 || x >= COLS || y < 0 || y >= ROWS) return true;
   const t = grid[y][x];
-  return t === L2.WALL || t === L2.STAL;
+  return t === L2.WALL || t === L2.ROCK;
 }
 // Fraction of base speed on this tile, matching level 1's path-fast / ground-slow feel.
 export function l2SpeedMult(x, y) {
@@ -57,60 +61,6 @@ export function l2SpeedMult(x, y) {
 // ---------------------------------------------------------------------------
 // Generation helpers (ported from the Python cave prototype)
 // ---------------------------------------------------------------------------
-
-function shuffle(a) {
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = (Math.random() * (i + 1)) | 0;
-    [a[i], a[j]] = [a[j], a[i]];
-  }
-  return a;
-}
-
-const RW = 0.33;
-// A wandering but center-bound one-tile route from a spawn to the middle.
-function wanderRoute(sx, sy) {
-  const route = [[sx, sy]];
-  const inI = (x, y) => x >= 1 && x < COLS - 1 && y >= 1 && y < ROWS - 1;
-  const offR = (x, y) => x >= 2 && x < COLS - 2 && y >= 2 && y < ROWS - 2;
-  const ok = (nx, ny) => (route.length === 1 ? inI(nx, ny) : offR(nx, ny));
-  let x = sx, y = sy, px = -1, py = -1, s = 0;
-  while ((x !== CX || y !== CY) && s < 400) {
-    s++;
-    const rX = CX - x, rY = CY - y, tw = [];
-    if (rX) tw.push([Math.sign(rX), 0]);
-    if (rY) tw.push([0, Math.sign(rY)]);
-    tw.sort((a, b) => (b[0] !== 0 ? Math.abs(rX) : Math.abs(rY)) - (a[0] !== 0 ? Math.abs(rX) : Math.abs(rY)));
-    const wander = Math.abs(rX) + Math.abs(rY) > 2 && s < 200 && Math.random() < RW;
-    let cand;
-    if (wander) {
-      const perp = [];
-      if (rX === 0) perp.push([1, 0], [-1, 0]);
-      if (rY === 0) perp.push([0, 1], [0, -1]);
-      if (rX && rY) perp.push([0, 1], [0, -1], [1, 0], [-1, 0]);
-      cand = shuffle(perp.concat(tw));
-    } else cand = tw;
-    let mv = false;
-    for (const [dx, dy] of cand) {
-      const nx = x + dx, ny = y + dy;
-      if (!ok(nx, ny) || isFort(nx, ny) || (nx === px && ny === py)) continue;
-      px = x; py = y; x = nx; y = ny; route.push([x, y]); mv = true; break;
-    }
-    if (!mv) {
-      for (const [dx, dy] of tw) {
-        const nx = x + dx, ny = y + dy;
-        if (!ok(nx, ny) || isFort(nx, ny)) continue;
-        px = x; py = y; x = nx; y = ny; route.push([x, y]); mv = true; break;
-      }
-      if (!mv) break;
-    }
-  }
-  while (x !== CX || y !== CY) {
-    const dx = Math.sign(CX - x), dy = Math.sign(CY - y);
-    if (dx && (Math.abs(CX - x) >= Math.abs(CY - y) || dy === 0)) x += dx; else y += dy;
-    route.push([x, y]);
-  }
-  return route;
-}
 
 const deg = (set, x, y) => {
   let n = 0;
@@ -145,7 +95,7 @@ function holeTiles(cx, cy, rx, ry) {
   return cells;
 }
 
-// Remove single-tile spurs (a cell with <=1 orthogonal neighbour).
+// Remove single-tile spurs (a cell with <=1 orthogonal neighbor).
 function trimSpurs(cells) {
   cells = new Set(cells);
   let ch = true;
@@ -225,9 +175,9 @@ function growBranch(path, reserved) {
   const all = [];
   for (let y = 2; y < ROWS - 2; y++) for (let x = 2; x < COLS - 2; x++) if (isP(x, y) && !isFort(x, y)) all.push([x, y]);
   const far = all.filter(([x, y]) => Math.max(Math.abs(x - CX), Math.abs(y - CY)) > 4);
-  const starts = shuffle(far.length ? far : all);
+  const starts = shuffleInPlace(far.length ? far : all);
   for (const [sx, sy] of starts) {
-    for (const [dx, dy] of shuffle(DIRS4.slice())) {
+    for (const [dx, dy] of shuffleInPlace(DIRS4.slice())) {
       const cells = [];
       let x = sx + dx, y = sy + dy;
       const maxLen = 2 + ((Math.random() * 3) | 0); // 2..4
@@ -258,8 +208,8 @@ function wouldFill2x2(path, x, y) {
 }
 
 // Fill a floor tile boxed in by path on all four sides, unless doing so would make a
-// 2x2 block. Iterates to a fixed point, like level 1's fillGrassHoles.
-function fillGrassHoles(path) {
+// 2x2 block. Iterates to a fixed point, mirroring level 1's fillGrassHoles.
+function fillFloorHoles(path) {
   let ch = true, g = 0;
   while (ch && g < 16) {
     ch = false; g++;
@@ -277,7 +227,7 @@ function fillGrassHoles(path) {
 // attempt that reaches the most spawns.
 function drawNetwork(routes, reserved, center3) {
   const path = new Set(center3);
-  const order = shuffle(routes.map((_, i) => i));
+  const order = shuffleInPlace(routes.map((_, i) => i));
   const routesToDraw = 4 + ((Math.random() * 3) | 0); // 4, 5 or 6
   for (let i = 0; i < routesToDraw && i < order.length; i++) {
     for (const [x, y] of routes[order[i]]) {
@@ -298,7 +248,7 @@ function drawNetwork(routes, reserved, center3) {
       }
     }
   }
-  fillGrassHoles(path);
+  fillFloorHoles(path);
   // trim 1x1 offshoots
   ch = true; g = 0;
   while (ch && g < 32) {
@@ -344,7 +294,7 @@ export function build() {
   // draw the path network. Thinning and pruning can sever a route near the center, so
   // retry the draw and keep the attempt that connects the most spawns, stopping once at
   // least three of the six spawns have a path to the center.
-  const routes = L2_SPAWNS.map(([sx, sy]) => wanderRoute(sx, sy));
+  const routes = L2_SPAWNS.map(([sx, sy]) => wanderingRouteToCenter(sx, sy, Math.random, isFort));
   for (const rt of routes) for (const [x, y] of rt) reserved.add(k(x, y));
   let best = null, bestConnected = -1;
   for (let t = 0; t < 14; t++) {
@@ -366,7 +316,7 @@ export function build() {
 
   // Rock and mineral objects, placed like level 1's trees: clumps and short strings on
   // open floor up to a 154-178 tile budget, 85% rocks (sprites 0-3) and 15% minerals
-  // (sprites 4-14). Each is a solid obstacle, stored under the STAL terrain code.
+  // (sprites 4-14). Each is a solid obstacle, stored under the ROCK terrain code.
   const objects = new Map(); // tile key -> sprite index in objects.png
   const objSafe = (x, y) => x >= 1 && x < COLS - 1 && y >= 1 && y < ROWS - 1 && !reserved.has(k(x, y)) && !isFort(x, y);
   const putObj = (x, y) => {
@@ -380,7 +330,7 @@ export function build() {
   const objTarget = 154 + ((Math.random() * 25) | 0); // 154-178, matching level 1's trees
   const openObj = [];
   for (let y = 1; y < ROWS - 1; y++) for (let x = 1; x < COLS - 1; x++) if (objSafe(x, y)) openObj.push([x, y]);
-  shuffle(openObj);
+  shuffleInPlace(openObj);
   let placed = 0;
   for (const [sx, sy] of openObj) {
     if (placed >= objTarget) break;
@@ -401,11 +351,11 @@ export function build() {
     }
   }
 
-  // write terrain codes (objects are solid, stored as STAL)
+  // write terrain codes (objects are solid, stored as ROCK)
   for (const key of path) { const x = key % COLS, y = (key / COLS) | 0; if (grid[y][x] === L2.FLOOR) grid[y][x] = L2.PATH; }
   for (const key of water) { const x = key % COLS, y = (key / COLS) | 0; grid[y][x] = L2.WATER; }
   for (const key of lava) { const x = key % COLS, y = (key / COLS) | 0; grid[y][x] = L2.LAVA; }
-  for (const key of objects.keys()) { const x = key % COLS, y = (key / COLS) | 0; grid[y][x] = L2.STAL; }
+  for (const key of objects.keys()) { const x = key % COLS, y = (key / COLS) | 0; grid[y][x] = L2.ROCK; }
 
   return { path, water, lava, objects };
 }
@@ -526,7 +476,6 @@ function renderHoles(ctx, cellSet, kind, lava16) {
 }
 
 const FLOOR_TILES = [[1, 9], [1, 10], [0, 9], [0, 10]];
-const SCATTER_TILES = [[2, 7], [2, 8]];
 
 function renderBackground(sprites, data) {
   const cv = document.createElement("canvas");

@@ -257,7 +257,7 @@ html, body {
 }
 .pip.full { background: var(--accent); border-color: var(--accent); }
 
-/* Upgrade-card overlay shown every 15 kills. */
+/* Upgrade-card overlay shown at each card threshold. */
 .buff-overlay {
   position: absolute;
   inset: 32px 16px;

@@ -62,7 +62,7 @@ export function nextStepFromField(field, x, y, isBlocked) {
   const k = (ax, ay) => ay * MAP_COLS + ax;
   const here = field[k(x, y)];
   let best = null;
-  // From a reachable tile only step somewhere strictly closer; from an unreachable tile
+  // From a reachable tile only step somewhere strictly closer. From an unreachable tile
   // (an enemy still standing on its spawn fort) take any reachable neighbor to get moving.
   let bestDist = here === -1 ? Infinity : here;
   for (const [dx, dy] of DIRS) {
