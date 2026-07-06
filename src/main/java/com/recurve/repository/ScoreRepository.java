@@ -1,6 +1,6 @@
-package com.rangersurvivor.repository;
+package com.recurve.repository;
 
-import com.rangersurvivor.model.Score;
+import com.recurve.model.Score;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 

@@ -1,7 +1,7 @@
-package com.rangersurvivor.controller;
+package com.recurve.controller;
 
-import com.rangersurvivor.service.GameSessionService;
-import com.rangersurvivor.service.SubmissionRateLimiter;
+import com.recurve.service.GameSessionService;
+import com.recurve.service.SubmissionRateLimiter;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;

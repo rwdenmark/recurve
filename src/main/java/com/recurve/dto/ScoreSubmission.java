@@ -1,4 +1,4 @@
-package com.rangersurvivor.dto;
+package com.recurve.dto;
 
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;

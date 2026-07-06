@@ -1,4 +1,4 @@
-package com.rangersurvivor.service;
+package com.recurve.service;
 
 /**
  * Mirror of the frontend spawn schedule (game.js) so the server can bound how many

@@ -10,7 +10,7 @@ const submitScoreButton = document.getElementById("submit-score-button");
 const leaderboardList = document.getElementById("leaderboard-list");
 
 try {
-  const savedName = localStorage.getItem("ranger-survivor.playerName");
+  const savedName = localStorage.getItem("recurve.playerName");
   if (savedName) playerNameInput.value = savedName;
 } catch (_) { /* localStorage may be disabled */ }
 
@@ -83,7 +83,7 @@ async function submitScore(kills) {
   // No name, silently do nothing. The player can still hit Start.
   if (!name) return;
   try {
-    localStorage.setItem("ranger-survivor.playerName", name);
+    localStorage.setItem("recurve.playerName", name);
   } catch (_) {}
   submitScoreButton.disabled = true;
   submitScoreButton.textContent = "Submitting…";

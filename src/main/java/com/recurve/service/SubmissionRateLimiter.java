@@ -1,4 +1,4 @@
-package com.rangersurvivor.service;
+package com.recurve.service;
 
 import org.springframework.stereotype.Service;
 

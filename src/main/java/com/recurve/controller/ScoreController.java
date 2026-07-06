@@ -1,13 +1,13 @@
-package com.rangersurvivor.controller;
+package com.recurve.controller;
 
-import com.rangersurvivor.dto.ScoreSubmission;
-import com.rangersurvivor.dto.ScoreView;
-import com.rangersurvivor.model.Score;
-import com.rangersurvivor.repository.ScoreRepository;
-import com.rangersurvivor.service.GameSessionService;
-import com.rangersurvivor.service.ProfanityFilter;
-import com.rangersurvivor.service.SpawnModel;
-import com.rangersurvivor.service.SubmissionRateLimiter;
+import com.recurve.dto.ScoreSubmission;
+import com.recurve.dto.ScoreView;
+import com.recurve.model.Score;
+import com.recurve.repository.ScoreRepository;
+import com.recurve.service.GameSessionService;
+import com.recurve.service.ProfanityFilter;
+import com.recurve.service.SpawnModel;
+import com.recurve.service.SubmissionRateLimiter;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.data.domain.PageRequest;

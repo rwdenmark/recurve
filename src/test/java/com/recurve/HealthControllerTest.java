@@ -1,6 +1,6 @@
-package com.rangersurvivor;
+package com.recurve;
 
-import com.rangersurvivor.controller.HealthController;
+import com.recurve.controller.HealthController;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
 

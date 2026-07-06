@@ -7,10 +7,27 @@ const musicSlider = document.getElementById("music-slider");
 const sfxMuteBtn = document.getElementById("sfx-mute-btn");
 const sfxSlider = document.getElementById("sfx-slider");
 
-let musicVolume = 0.10;
-let musicMuted = false;
-let sfxVolume = 0.25;
-let sfxMuted = false;
+// Sound preferences persist across sessions in localStorage (same approach as
+// astro-siege), so the player's volume and mute choices survive a reload.
+const PREFS_KEY = "recurve.sound";
+function loadPrefs() {
+  try {
+    const raw = localStorage.getItem(PREFS_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch (_) { /* storage unavailable (private mode, etc.) */ }
+  return {};
+}
+const savedPrefs = loadPrefs();
+function savePrefs() {
+  try {
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ musicVolume, musicMuted, sfxVolume, sfxMuted }));
+  } catch (_) { /* storage unavailable: just keep the in-memory values */ }
+}
+
+let musicVolume = savedPrefs.musicVolume ?? 0.10;
+let musicMuted = savedPrefs.musicMuted ?? false;
+let sfxVolume = savedPrefs.sfxVolume ?? 0.25;
+let sfxMuted = savedPrefs.sfxMuted ?? false;
 export let musicMode = "none";   // "menu" | "game" | "none"
 
 const menuMusic = new Audio("level_one/audio/menu.mp3");
@@ -86,22 +103,29 @@ musicSlider.addEventListener("input", () => {
   if (musicVolume > 0) musicMuted = false;
   applyVolume();
   updateMuteIcon();
+  savePrefs();
 });
 musicMuteBtn.addEventListener("click", () => {
   musicMuted = !musicMuted;
   applyVolume();
   updateMuteIcon();
+  savePrefs();
 });
 sfxSlider.addEventListener("input", () => {
   sfxVolume = Number(sfxSlider.value) / 100;
   if (sfxVolume > 0) sfxMuted = false;
   updateMuteIcon();
+  savePrefs();
 });
 sfxMuteBtn.addEventListener("click", () => {
   sfxMuted = !sfxMuted;
   updateMuteIcon();
+  savePrefs();
 });
 
+// Reflect the saved preferences on the sliders before the first paint.
+musicSlider.value = String(Math.round(musicVolume * 100));
+sfxSlider.value = String(Math.round(sfxVolume * 100));
 applyVolume();
 updateMuteIcon();
 

@@ -8,6 +8,6 @@ RUN ./mvnw -DskipTests package -B
 
 FROM eclipse-temurin:17-jre
 WORKDIR /app
-COPY --from=builder /build/target/ranger-survivor-0.0.1-SNAPSHOT.jar app.jar
+COPY --from=builder /build/target/recurve-0.0.1-SNAPSHOT.jar app.jar
 EXPOSE 8080
 ENTRYPOINT ["java", "-XX:MaxRAMPercentage=75", "--enable-native-access=ALL-UNNAMED", "-jar", "app.jar"]

@@ -25,6 +25,11 @@ const k = (x, y) => y * COLS + x;
 const FORTSET = new Set(L2_SPAWNS.map(([x, y]) => k(x, y)));
 const isFort = (x, y) => FORTSET.has(k(x, y));
 
+// Object sprite sheet (objects.png): 5 columns of 48px cells, bottom-anchored. Sprites
+// 0-3 are rocks, 4-14 are minerals (crystals plus the orange-ore rock). Scattered like
+// level 1's trees.
+const OBJ_CELL = 48, OBJ_COLS = 5, ROCK_COUNT = 4, MINERAL_COUNT = 11;
+
 let grid = null;      // 2D array [ROWS][COLS] of L2.* codes
 let bgCanvas = null;  // pre-rendered background
 
@@ -176,19 +181,29 @@ function fillHoles(cells) {
   return out;
 }
 
-// Place n organic holes on open floor, buffered one tile from reserved/other holes.
-function placeHoles(n, reserved, others, rxR, ryR, minSize) {
+// Grow small organic pools until the total tile count reaches a random target inside
+// [tLo, tHi], with overshoot capped at one pool, so the totals stay in a tight band.
+// A pool never overlaps the reserved path network, and keeps a one-tile gap from spawns,
+// from other pools of the same type, and from the other liquid (so water and lava never
+// touch). Pools may sit right up against a path. Paths and spawn routes are reserved
+// before this runs, so the routes to the center are never blocked.
+function placePools(tLo, tHi, reserved, others, rxR, ryR, minSize) {
+  const goal = tLo + ((Math.random() * (tHi - tLo + 1)) | 0);
   const out = new Set();
-  const blocked = (key) => {
-    const x = key % COLS, y = (key / COLS) | 0;
-    for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
-      const nk = k(x + dx, y + dy);
-      if (reserved.has(nk) || others.has(nk) || out.has(nk) || FORTSET.has(nk)) return true;
+  const blocked = (blob) => {
+    for (const key of blob) {
+      const x = key % COLS, y = (key / COLS) | 0;
+      if (!(x >= 2 && x < COLS - 2 && y >= 2 && y < ROWS - 2)) return true;
+      if (reserved.has(key)) return true; // never overlap paths/routes
+      for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
+        const nk = k(x + dx, y + dy);
+        if (FORTSET.has(nk) || out.has(nk) || others.has(nk)) return true; // gap from spawns, same-type, other liquid
+      }
     }
-    return !(x >= 2 && x < COLS - 2 && y >= 2 && y < ROWS - 2);
+    return false;
   };
-  let made = 0, att = 0;
-  while (made < n && att < 800) {
+  let att = 0;
+  while (out.size < goal && att < 3000) {
     att++;
     const hx = 4 + ((Math.random() * (COLS - 9)) | 0);
     const hy = 3 + ((Math.random() * (ROWS - 6)) | 0);
@@ -196,37 +211,80 @@ function placeHoles(n, reserved, others, rxR, ryR, minSize) {
     const ry = ryR[0] + Math.random() * (ryR[1] - ryR[0]);
     const blob = trimSpurs(holeTiles(hx, hy, rx, ry));
     if (blob.size < minSize) continue;
-    let bad = false;
-    for (const key of blob) if (blocked(key)) { bad = true; break; }
-    if (bad) continue;
+    if (out.size + blob.size > goal + minSize) continue; // cap overshoot
+    if (blocked(blob)) continue;
     for (const key of blob) out.add(key);
-    made++;
   }
-  return fillHoles(trimSpurs(out));
+  return fillHoles(out);
 }
 
-// ---------------------------------------------------------------------------
-// Map assembly
-// ---------------------------------------------------------------------------
-
-function build() {
-  grid = Array.from({ length: ROWS }, () => new Array(COLS).fill(L2.FLOOR));
-  for (let x = 0; x < COLS; x++) { grid[0][x] = L2.WALL; grid[ROWS - 1][x] = L2.WALL; }
-  for (let y = 0; y < ROWS; y++) { grid[y][0] = L2.WALL; grid[y][COLS - 1] = L2.WALL; }
-
-  let path = new Set();
-  const reserved = new Set();
-  const center3 = new Set();
-  for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-    center3.add(k(CX + dx, CY + dy)); path.add(k(CX + dx, CY + dy)); reserved.add(k(CX + dx, CY + dy));
+// A short (2-4 tile) one-wide offshoot grown off an existing path tile into open
+// floor, matching level 1's branches. Adds to `path`, returns true if one was placed.
+function growBranch(path, reserved) {
+  const isP = (x, y) => path.has(k(x, y));
+  const all = [];
+  for (let y = 2; y < ROWS - 2; y++) for (let x = 2; x < COLS - 2; x++) if (isP(x, y) && !isFort(x, y)) all.push([x, y]);
+  const far = all.filter(([x, y]) => Math.max(Math.abs(x - CX), Math.abs(y - CY)) > 4);
+  const starts = shuffle(far.length ? far : all);
+  for (const [sx, sy] of starts) {
+    for (const [dx, dy] of shuffle(DIRS4.slice())) {
+      const cells = [];
+      let x = sx + dx, y = sy + dy;
+      const maxLen = 2 + ((Math.random() * 3) | 0); // 2..4
+      while (cells.length < maxLen) {
+        if (x < 1 || x >= COLS - 1 || y < 1 || y >= ROWS - 1) break;
+        if (isP(x, y) || isFort(x, y) || reserved.has(k(x, y))) break;
+        const prev = cells.length === 0 ? [sx, sy] : cells[cells.length - 1];
+        let touches = false;
+        for (const [ex, ey] of DIRS4) { const nx = x + ex, ny = y + ey; if (nx === prev[0] && ny === prev[1]) continue; if (isP(nx, ny)) { touches = true; break; } }
+        if (touches) break;
+        cells.push([x, y]); x += dx; y += dy;
+      }
+      if (cells.length >= 2) { for (const [cx, cy] of cells) path.add(k(cx, cy)); return true; }
+    }
   }
-  // draw every route so all six spawns connect
-  for (const [sx, sy] of L2_SPAWNS) {
-    for (const [x, y] of wanderRoute(sx, sy)) {
-      reserved.add(k(x, y));
+  return false;
+}
+
+// Would turning (x, y) into path complete a 2x2 all-path block?
+function wouldFill2x2(path, x, y) {
+  const isP = (ax, ay) => (ax === x && ay === y) || path.has(k(ax, ay));
+  for (const [ox, oy] of [[0, 0], [-1, 0], [0, -1], [-1, -1]]) {
+    let all = true;
+    for (const [dx, dy] of [[0, 0], [1, 0], [0, 1], [1, 1]]) if (!isP(x + ox + dx, y + oy + dy)) { all = false; break; }
+    if (all) return true;
+  }
+  return false;
+}
+
+// Fill a floor tile boxed in by path on all four sides, unless doing so would make a
+// 2x2 block. Iterates to a fixed point, like level 1's fillGrassHoles.
+function fillGrassHoles(path) {
+  let ch = true, g = 0;
+  while (ch && g < 16) {
+    ch = false; g++;
+    for (let y = 1; y < ROWS - 1; y++) for (let x = 1; x < COLS - 1; x++) {
+      if (path.has(k(x, y)) || isFort(x, y)) continue;
+      if (deg(path, x, y) !== 4 || wouldFill2x2(path, x, y)) continue;
+      path.add(k(x, y)); ch = true;
+    }
+  }
+}
+
+// One attempt at the path network: draw a random 4-6 of the routes, add a few short
+// branches, thin to one tile wide, fill enclosed pockets, trim 1x1 offshoots, and return
+// only the piece connected to the center. build() calls this repeatedly and keeps the
+// attempt that reaches the most spawns.
+function drawNetwork(routes, reserved, center3) {
+  const path = new Set(center3);
+  const order = shuffle(routes.map((_, i) => i));
+  const routesToDraw = 4 + ((Math.random() * 3) | 0); // 4, 5 or 6
+  for (let i = 0; i < routesToDraw && i < order.length; i++) {
+    for (const [x, y] of routes[order[i]]) {
       if (x >= 1 && x < COLS - 1 && y >= 1 && y < ROWS - 1) path.add(k(x, y));
     }
   }
+  for (let b = 3 + ((Math.random() * 3) | 0); b > 0; b--) growBranch(path, reserved);
   // thin to one tile wide, keeping the center 3x3 and fort tiles
   let ch = true, g = 0;
   while (ch && g < 64) {
@@ -240,6 +298,7 @@ function build() {
       }
     }
   }
+  fillGrassHoles(path);
   // trim 1x1 offshoots
   ch = true; g = 0;
   while (ch && g < 32) {
@@ -263,37 +322,92 @@ function build() {
       if (nx >= 1 && nx < COLS - 1 && ny >= 1 && ny < ROWS - 1 && path.has(nk) && !seen.has(nk)) { seen.add(nk); q.push(nk); }
     }
   }
-  path = seen;
+  return seen;
+}
+
+// ---------------------------------------------------------------------------
+// Map assembly
+// ---------------------------------------------------------------------------
+
+export function build() {
+  grid = Array.from({ length: ROWS }, () => new Array(COLS).fill(L2.FLOOR));
+  for (let x = 0; x < COLS; x++) { grid[0][x] = L2.WALL; grid[ROWS - 1][x] = L2.WALL; }
+  for (let y = 0; y < ROWS; y++) { grid[y][0] = L2.WALL; grid[y][COLS - 1] = L2.WALL; }
+
+  let path = new Set();
+  const reserved = new Set();
+  const center3 = new Set();
+  for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+    center3.add(k(CX + dx, CY + dy)); path.add(k(CX + dx, CY + dy)); reserved.add(k(CX + dx, CY + dy));
+  }
+  // Reserve a route from every spawn (so water and lava never wall a spawn off), then
+  // draw the path network. Thinning and pruning can sever a route near the center, so
+  // retry the draw and keep the attempt that connects the most spawns, stopping once at
+  // least three of the six spawns have a path to the center.
+  const routes = L2_SPAWNS.map(([sx, sy]) => wanderRoute(sx, sy));
+  for (const rt of routes) for (const [x, y] of rt) reserved.add(k(x, y));
+  let best = null, bestConnected = -1;
+  for (let t = 0; t < 14; t++) {
+    const attempt = drawNetwork(routes, reserved, center3);
+    let c = 0;
+    for (const [sx, sy] of L2_SPAWNS) if (attempt.has(k(sx, sy))) c++;
+    if (c > bestConnected) { bestConnected = c; best = attempt; }
+    if (c >= 3) break;
+  }
+  path = best;
   for (const p of path) reserved.add(p);
 
-  const water = placeHoles(2, reserved, new Set(), [1.9, 3.0], [1.5, 2.2], 9);
+  // Tuned so water averages ~40 tiles (mostly 30-50) and lava ~30 (mostly 25-35).
+  // Water first, then lava, which keeps a gap from the water.
+  const water = placePools(33, 39, reserved, new Set(), [1.8, 2.3], [1.5, 1.9], 5);
   for (const p of water) reserved.add(p);
-  const lava = placeHoles(2, reserved, water, [1.6, 2.5], [1.3, 1.9], 8);
+  const lava = placePools(28, 32, reserved, water, [1.7, 2.1], [1.4, 1.7], 3);
   for (const p of lava) reserved.add(p);
 
-  // stalagmite obstacles on open floor, spaced apart
-  const stal = new Set();
-  const free = [];
-  for (let y = 1; y < ROWS - 1; y++) for (let x = 1; x < COLS - 1; x++) {
-    const key = k(x, y);
-    if (!reserved.has(key) && !isFort(x, y)) free.push(key);
-  }
-  shuffle(free);
-  for (const key of free) {
-    if (stal.size >= 10) break;
-    const x = key % COLS, y = (key / COLS) | 0;
-    let near = false;
-    for (let dx = -1; dx <= 1 && !near; dx++) for (let dy = -1; dy <= 1; dy++) if (stal.has(k(x + dx, y + dy))) { near = true; break; }
-    if (!near) stal.add(key);
+  // Rock and mineral objects, placed like level 1's trees: clumps and short strings on
+  // open floor up to a 154-178 tile budget, 85% rocks (sprites 0-3) and 15% minerals
+  // (sprites 4-14). Each is a solid obstacle, stored under the STAL terrain code.
+  const objects = new Map(); // tile key -> sprite index in objects.png
+  const objSafe = (x, y) => x >= 1 && x < COLS - 1 && y >= 1 && y < ROWS - 1 && !reserved.has(k(x, y)) && !isFort(x, y);
+  const putObj = (x, y) => {
+    if (!objSafe(x, y) || objects.has(k(x, y))) return false;
+    const idx = Math.random() < 0.85
+      ? (Math.random() * ROCK_COUNT) | 0
+      : ROCK_COUNT + ((Math.random() * MINERAL_COUNT) | 0);
+    objects.set(k(x, y), idx);
+    return true;
+  };
+  const objTarget = 154 + ((Math.random() * 25) | 0); // 154-178, matching level 1's trees
+  const openObj = [];
+  for (let y = 1; y < ROWS - 1; y++) for (let x = 1; x < COLS - 1; x++) if (objSafe(x, y)) openObj.push([x, y]);
+  shuffle(openObj);
+  let placed = 0;
+  for (const [sx, sy] of openObj) {
+    if (placed >= objTarget) break;
+    if (!objSafe(sx, sy) || objects.has(k(sx, sy))) continue;
+    if (Math.random() < 0.25) { // 2x2 clump
+      for (const [dx, dy] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
+        if (placed >= objTarget) break;
+        if (putObj(sx + dx, sy + dy)) placed++;
+      }
+    } else { // string of 2-5
+      const len = 2 + ((Math.random() * 4) | 0);
+      const horiz = Math.random() < 0.5;
+      for (let i = 0; i < len; i++) {
+        if (placed >= objTarget) break;
+        const x = horiz ? sx + i : sx, y = horiz ? sy : sy + i;
+        if (putObj(x, y)) placed++;
+      }
+    }
   }
 
-  // write terrain codes
+  // write terrain codes (objects are solid, stored as STAL)
   for (const key of path) { const x = key % COLS, y = (key / COLS) | 0; if (grid[y][x] === L2.FLOOR) grid[y][x] = L2.PATH; }
   for (const key of water) { const x = key % COLS, y = (key / COLS) | 0; grid[y][x] = L2.WATER; }
   for (const key of lava) { const x = key % COLS, y = (key / COLS) | 0; grid[y][x] = L2.LAVA; }
-  for (const key of stal) { const x = key % COLS, y = (key / COLS) | 0; grid[y][x] = L2.STAL; }
+  for (const key of objects.keys()) { const x = key % COLS, y = (key / COLS) | 0; grid[y][x] = L2.STAL; }
 
-  return { path, water, lava, stal };
+  return { path, water, lava, objects };
 }
 
 // ---------------------------------------------------------------------------
@@ -446,26 +560,17 @@ function renderBackground(sprites, data) {
     if (x >= 1 && x < COLS - 1 && y >= 1 && y < ROWS - 1) g.drawImage(sprites.cavePath, x * TILE, y * TILE, TILE, TILE);
   }
 
-  // scatter (mounds / pits) on some open floor
-  for (let y = 1; y < ROWS - 1; y++) for (let x = 1; x < COLS - 1; x++) {
-    if (grid[y][x] !== L2.FLOOR) continue;
-    if (Math.random() < 0.05 && sheet) {
-      const [sx, sy] = SCATTER_TILES[(Math.random() * SCATTER_TILES.length) | 0];
-      g.drawImage(sheet, sx * 16, sy * 16, 16, 16, x * TILE, y * TILE, TILE, TILE);
-    }
-  }
-
-  // stalagmites
-  if (sprites.caveStalagmite) for (const key of data.stal) {
-    const x = key % COLS, y = (key / COLS) | 0;
-    if (Math.random() < 0.5) {
-      g.drawImage(sprites.caveStalagmite, x * TILE, y * TILE, TILE, TILE);
-    } else {
-      g.save();
-      g.translate((x + 1) * TILE, y * TILE);
-      g.scale(-1, 1);
-      g.drawImage(sprites.caveStalagmite, 0, 0, TILE, TILE);
-      g.restore();
+  // rock and mineral objects, drawn top-to-bottom so a lower one overlaps the ones
+  // behind it. Each 48px cell is bottom-anchored, so drawing it straight onto the tile
+  // sits the object on the ground.
+  const objSheet = sprites.caveObjects;
+  if (objSheet) {
+    const keys = [...data.objects.keys()].sort((a, b) => a - b); // key = y*COLS+x -> top-to-bottom
+    for (const key of keys) {
+      const x = key % COLS, y = (key / COLS) | 0;
+      const idx = data.objects.get(key);
+      const sx = (idx % OBJ_COLS) * OBJ_CELL, sy = ((idx / OBJ_COLS) | 0) * OBJ_CELL;
+      g.drawImage(objSheet, sx, sy, OBJ_CELL, OBJ_CELL, x * TILE, y * TILE, TILE, TILE);
     }
   }
 

@@ -1,12 +1,12 @@
-package com.rangersurvivor;
+package com.recurve;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 @SpringBootApplication
-public class RangerSurvivorApplication {
+public class RecurveApplication {
 
     public static void main(String[] args) {
-        SpringApplication.run(RangerSurvivorApplication.class, args);
+        SpringApplication.run(RecurveApplication.class, args);
     }
 }

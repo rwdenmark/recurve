@@ -1,4 +1,4 @@
-package com.rangersurvivor;
+package com.recurve;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;

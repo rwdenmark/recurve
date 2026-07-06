@@ -10,6 +10,8 @@ import {
   PLAYER_START_X,
   PLAYER_START_Y,
   SPAWN_POINTS,
+  isSolid,
+  isFortAt,
 } from "../../main/resources/static/mapgen.js";
 import { buildFlowField, nextStepFromField } from "../../main/resources/static/pathfinding.js";
 
@@ -53,26 +55,43 @@ test("nextStepFromField steps one tile closer to the goal", () => {
   );
 });
 
-test("a tile walled off by obstacles yields no step", () => {
+test("a fully enclosed tile yields no step (no corner cutting)", () => {
   const map = openMap();
   const bx = 5, by = 5; // clear of center and all forts
   map[by][bx + 1] = TILES.TREE;
   map[by][bx - 1] = TILES.TREE;
   map[by + 1][bx] = TILES.WATER;
   map[by - 1][bx] = TILES.TREE;
+  const blocked = (x, y) => isSolid(map[y][x]) || isFortAt(x, y);
   const field = buildFlowField(PLAYER_START_X, PLAYER_START_Y, map);
+  // Each orthogonal neighbor is solid and every diagonal has both sides blocked, so the
+  // tile can't be reached and an enemy on it can't cut a corner out.
   assert.equal(field[idx(bx, by)], -1);
-  assert.equal(nextStepFromField(field, bx, by), null);
+  assert.equal(nextStepFromField(field, bx, by, blocked), null);
 });
 
-test("the field routes around an obstacle instead of through it", () => {
+test("diagonal movement rounds a single obstacle and still descends", () => {
   const map = openMap();
   // Block the straight horizontal route one tile east of the goal.
   const wx = PLAYER_START_X + 1;
   map[PLAYER_START_Y][wx] = TILES.TREE;
   const field = buildFlowField(PLAYER_START_X, PLAYER_START_Y, map);
-  // The blocked tile itself is unreachable from that side, but the tile beyond it
-  // is still reached the long way, so its distance exceeds the Manhattan distance.
+  // The tree tile itself is solid, but the tile beyond it is now reached diagonally, so
+  // it stays reachable while costing more than the straight-line distance (a real detour).
   assert.equal(field[idx(wx, PLAYER_START_Y)], -1);
-  assert.ok(field[idx(PLAYER_START_X + 2, PLAYER_START_Y)] > 2);
+  const behind = field[idx(PLAYER_START_X + 2, PLAYER_START_Y)];
+  assert.notEqual(behind, -1);
+  assert.ok(behind > 2, `expected a detour cost > 2, got ${behind}`);
+  // An enemy two tiles east still finds a step toward the goal (never stuck).
+  assert.notEqual(nextStepFromField(field, PLAYER_START_X + 2, PLAYER_START_Y), null);
+});
+
+test("cheaper terrain lowers the field value (path preference)", () => {
+  const map = openMap();
+  const gx = PLAYER_START_X, gy = PLAYER_START_Y;
+  // Make the east neighbor a quarter of the normal cost to enter.
+  const enterCost = (x, y) => (x === gx + 1 && y === gy ? 0.25 : 1);
+  const field = buildFlowField(gx, gy, map, null, enterCost);
+  assert.equal(field[idx(gx + 1, gy)], 0.25);
+  assert.ok(field[idx(gx + 1, gy)] < field[idx(gx - 1, gy)]);
 });

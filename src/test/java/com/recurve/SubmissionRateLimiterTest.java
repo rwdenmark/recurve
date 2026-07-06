@@ -1,6 +1,6 @@
-package com.rangersurvivor;
+package com.recurve;
 
-import com.rangersurvivor.service.SubmissionRateLimiter;
+import com.recurve.service.SubmissionRateLimiter;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;

@@ -1,4 +1,4 @@
-package com.rangersurvivor.model;
+package com.recurve.model;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;

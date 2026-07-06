@@ -1,6 +1,6 @@
-package com.rangersurvivor;
+package com.recurve;
 
-import com.rangersurvivor.service.SpawnModel;
+import com.recurve.service.SpawnModel;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;

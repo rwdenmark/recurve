@@ -1,4 +1,4 @@
-// Ranger Survivor, a top-down tile-based survival shooter.
+// Recurve, a top-down tile-based survival shooter.
 
 // ---------------------------------------------------------------------------
 // Config
@@ -16,7 +16,7 @@ import {
 import { renderHearts, updateHud } from "./hud.js";
 import {
   DEFAULT_HEALTH, DEFAULT_DAMAGE, DEFAULT_ATTACK_INTERVAL_MS, DEFAULT_MOVE_DURATION_MS,
-  playerDamage, playerSpeedMult, fireRateMult, playerMultiShot, playerOmniShot,
+  playerDamage, playerSpeedMult, fireRateMult, playerMultiShot, omniLevel,
   playerPierce, playerArrowRange, buffsAwarded,
   BUFF_EVERY_KILLS, startBuffSelection, resetRunStats,
 } from "./buffs.js";
@@ -55,7 +55,7 @@ const SPRITE_PATHS = {
   caveWater: "level_two/water.png",      // flat deep-water colour
   caveLava:  "level_two/lava.png",       // molten lava texture
   cavePath:  "level_two/path.png",       // dark-packed dirt path tile
-  caveStalagmite: "level_two/stalagmite.png",
+  caveObjects: "level_two/objects.png",  // 5x3 grid of 48px rock and mineral sprites
   caveFrame: "level_two/frame.png",      // baked border: edges + corners + spawn portals
 };
 
@@ -87,9 +87,13 @@ const KNIGHT3_CELL = { sheet: "knight3", w: 350, h: 240, ax: 147.4, ay: 235.5, s
 // horizontal pixel-mass centroid and ay its feet baseline, so it anchors to its tile
 // like the other characters. Scale matches the knights for now; tune per enemy type
 // when the spawn logic is wired up.
-const TROLL_CELL  = { sheet: "troll",  w: 307, h: 240, ax: 120.9, ay: 235.0, scale: 0.2109 };
-const TROLL2_CELL = { sheet: "troll2", w: 305, h: 240, ax: 120.0, ay: 232.0, scale: 0.2109 };
-const TROLL3_CELL = { sheet: "troll3", w: 301, h: 240, ax: 122.5, ay: 236.0, scale: 0.2109 };
+// Scale is tuned per troll so the idle body renders the same ~44px height as the
+// knights, filling the tile. The trolls need a larger scale than the knights because
+// their wide club-swing attack frames inflated the packed cell, leaving the idle body
+// smaller inside it.
+const TROLL_CELL  = { sheet: "troll",  w: 307, h: 240, ax: 120.9, ay: 235.0, scale: 0.2958 };
+const TROLL2_CELL = { sheet: "troll2", w: 305, h: 240, ax: 120.0, ay: 232.0, scale: 0.2900 };
+const TROLL3_CELL = { sheet: "troll3", w: 301, h: 240, ax: 122.5, ay: 236.0, scale: 0.2721 };
 const ANIM_FRAME_MS = { IDLE: 130, WALK: 80, RUN: 60, ATTACK: 55, HURT: 70, DIE: 90 };
 const ATTACK_HOLD_MS = ANIM_FRAMES * ANIM_FRAME_MS.ATTACK;
 // The arrow leaves the bow partway through the swing (draw first, then release).
@@ -118,16 +122,21 @@ function fallbackColor(tileId) {
   return "#5fa83c";
 }
 
-// Cap concurrent enemies to hold frame rate and keep the board readable.
-const MAX_ENEMIES = 40;
+// Safety cap on the live enemy count, purely to protect the frame rate (difficulty comes
+// from the target population and the spawn interval, not this). It rises each cycle so late,
+// harder runs can still pack the board on a capable machine. maxEnemies() reads it live.
+const MAX_ENEMIES_BASE = 100;
+const MAX_ENEMIES_PER_CYCLE = 40;
 
-// Spawning tops up toward a target population every SPAWN_INTERVAL_MS. Both the
-// target and the per-tick batch ramp with elapsed time, so the opening stays sparse
-// and the late game fills toward MAX_ENEMIES even against a fast-killing build.
-const SPAWN_INTERVAL_MS = 600;
-const SPAWN_TARGET_START = 3;       // target population at the start of a run
-const SPAWN_TARGET_RAMP_MS = 8000;  // target grows by 1 every 8s
-const SPAWN_BATCH_RAMP_MS = 60000;  // per-tick spawn batch grows by 1 each minute
+// Spawning tops up toward a target population on a timer, both driven by cards taken. The
+// target grows a flat amount per card, and the interval shortens per card down to a floor,
+// which is the real swarm lever: only the few fort tiles can spawn, so a tick can place at
+// most that many enemies no matter how big the target gets. See the AskUserQuestion design.
+const SPAWN_INTERVAL_BASE = 600;    // ms between top-ups at the start of a run
+const SPAWN_INTERVAL_FLOOR = 175;   // fastest top-up once enough cards are in
+const SPAWN_INTERVAL_PER_CARD = 25; // interval shortens this much per card taken
+const SPAWN_TARGET_START = 6;       // target population before any cards
+const SPAWN_TARGET_PER_CARD = 3;    // target grows this much per card, uncapped by design
 
 const ARROW_SPEED = TILE_SIZE / 50; // travel speed in px/ms (one tile per 50ms)
 
@@ -142,8 +151,8 @@ const DIAG_DURATION_FACTOR = 1.414;
 // speedScale = fraction of player speed on the same terrain. hpScale = multiples of
 // DEFAULT_DAMAGE (so arrows-to-kill holds if the default changes). unlockCards = how
 // many upgrade cards the player must have taken before this type starts spawning.
-const ENEMY_TYPES = {
-  enemy_one: {
+const KNIGHT_TYPES = {
+  knight_one: {
     cell: KNIGHT_CELL,
     speedScale: 0.25,
     attackWindupMs: 1000,
@@ -151,7 +160,7 @@ const ENEMY_TYPES = {
     hpScale: 1,
     unlockCards: 0,
   },
-  enemy_two: {
+  knight_two: {
     cell: KNIGHT2_CELL,
     speedScale: 0.40,
     attackWindupMs: 1000,
@@ -159,38 +168,38 @@ const ENEMY_TYPES = {
     hpScale: 2,
     unlockCards: 3,
   },
-  enemy_three: {
+  knight_three: {
     cell: KNIGHT3_CELL,
     speedScale: 0.60,
     attackWindupMs: 1000,
     damage: 1,
-    hpScale: 4,
+    hpScale: 3,
     unlockCards: 6,
   },
 };
 // Troll enemy types for level 2. Same shape as the knights, mirroring the matching
-// knight's speed/damage/windup, but with double the health (hpScale x2) and unlocking
-// on level-2 cards (troll1 from the start, troll2 after 2, troll3 after 4).
+// knight's speed, damage, and attack windup, with their own health (hpScale x
+// DEFAULT_DAMAGE gives troll1=8, troll2=10, troll3=12 HP) and unlocking on level-2 cards
+// (troll1 from the start, troll2 after 3, troll3 after 6).
 const TROLL_TYPES = {
-  troll_one:   { cell: TROLL_CELL,  speedScale: 0.25, attackWindupMs: 1000, damage: 1, hpScale: 2, unlockCards: 0 },
-  troll_two:   { cell: TROLL2_CELL, speedScale: 0.40, attackWindupMs: 1000, damage: 1, hpScale: 4, unlockCards: 2 },
-  troll_three: { cell: TROLL3_CELL, speedScale: 0.60, attackWindupMs: 1000, damage: 1, hpScale: 8, unlockCards: 4 },
+  troll_one:   { cell: TROLL_CELL,  speedScale: 0.25, attackWindupMs: 1000, damage: 1, hpScale: 4, unlockCards: 0 },
+  troll_two:   { cell: TROLL2_CELL, speedScale: 0.40, attackWindupMs: 1000, damage: 1, hpScale: 5, unlockCards: 3 },
+  troll_three: { cell: TROLL3_CELL, speedScale: 0.60, attackWindupMs: 1000, damage: 1, hpScale: 6, unlockCards: 6 },
 };
 // Every enemy across both levels, keyed by type, so lookups (HP, cell, step timing)
 // don't care which level spawned it.
-const ALL_TYPES = { ...ENEMY_TYPES, ...TROLL_TYPES };
-// Level wiring: the 8th upgrade card ends level 1, and each level uses its own enemy
-// types and spawn points.
-const CARDS_TO_LEVEL2 = 8;
-const LEVEL_TYPES = { 1: ["enemy_one", "enemy_two", "enemy_three"], 2: ["troll_one", "troll_two", "troll_three"] };
-function levelTypes() { return LEVEL_TYPES[level]; }
+const ALL_TYPES = { ...KNIGHT_TYPES, ...TROLL_TYPES };
+// Each level uses its own enemy types and spawn points. Add a level's entry here (and a
+// levelSpawns branch) when you add one.
+const LEVEL_TYPES = { 1: ["knight_one", "knight_two", "knight_three"], 2: ["troll_one", "troll_two", "troll_three"] };
+function levelTypes() { return LEVEL_TYPES[level] || LEVEL_TYPES[1]; }
 function levelSpawns() { return level === 2 ? L2_SPAWNS.map(([x, y]) => ({ x, y })) : SPAWN_POINTS; }
-// Cards counted within the current level. Troll unlocks use level-2-local cards, while
-// the buff stats themselves carry over from level 1.
-function levelCards() { return level === 2 ? Math.max(0, buffsAwarded - CARDS_TO_LEVEL2) : buffsAwarded; }
-// Enemy HP in damage points, scaled off the default arrow damage.
+// Upgrade cards taken within the current level. Enemy-type unlocks are per-level (they
+// subtract the cards taken in earlier levels), while the buff stats carry over.
+function levelCards() { return Math.max(0, buffsAwarded - levelCardBaseline); }
+// Enemy HP in damage points: base (hpScale x default arrow damage) plus the per-cycle bump.
 function enemyHp(typeKey) {
-  return ALL_TYPES[typeKey].hpScale * DEFAULT_DAMAGE;
+  return ALL_TYPES[typeKey].hpScale * DEFAULT_DAMAGE + cycle * CYCLE_HP_STEP;
 }
 // A type is available once the player has taken its unlockCards upgrade cards this level.
 function spawnWeight(typeKey) {
@@ -203,8 +212,12 @@ function terrainMult(tileId) {
   if (tileId === TILES.GRASS) return GRASS_SPEED_MULT;
   return 1.0;
 }
+// Effective speed fraction for a type this cycle: base speedScale plus the per-cycle bump.
+function enemySpeedScale(typeKey) {
+  return ALL_TYPES[typeKey].speedScale + cycle * CYCLE_SPEED_STEP;
+}
 function enemyStepDuration(type, x, y) {
-  return Math.round((DEFAULT_MOVE_DURATION_MS / cellSpeedMult(x, y)) / ALL_TYPES[type].speedScale);
+  return Math.round((DEFAULT_MOVE_DURATION_MS / cellSpeedMult(x, y)) / enemySpeedScale(type));
 }
 
 // Each ranger is multipliers off the stat defaults. bars are 1-3 ratings for the
@@ -254,6 +267,11 @@ const overlayButton = document.getElementById("overlay-button");
 const DAMAGE_FLASH_MS = 900;
 let damageFlashUntil = 0;
 
+// After a non-fatal hit the ranger is invulnerable and blinks for this long, and can
+// walk through enemies (but not walls, water, rocks or trees) while it lasts.
+const INVULN_MS = 3000;
+let invulnUntil = 0;
+
 // Browsers block audio until a user gesture, so start the menu track on first input.
 function unlockAudio() {
   if (musicMode === "none" && !state.running) playMenuMusic();
@@ -272,10 +290,37 @@ window.addEventListener("keydown", unlockAudio);
 // World state
 // ---------------------------------------------------------------------------
 
-// Which level is active (1 = grass/knights, 2 = cave/trolls) and when it began, so
-// the spawn ramp restarts at level 2 while buffs and kills carry over.
+// ---------------------------------------------------------------------------
+// Level configuration.
+// START_LEVEL: which level a run boots into. 1 = normal play (start on level 1; the fade
+// transition then carries you to later levels). Set to 2, 3, ... to jump straight into a
+// level for design work, skipping the earlier ones and the transition.
+// To ADD a level to the loop: bump LEVEL_COUNT, add its enemy types to LEVEL_TYPES and
+// spawn points to levelSpawns(), add its map to setupLevelMap(), and add a music playlist
+// for it in audio.js (playGameMusic).
+// ---------------------------------------------------------------------------
+const START_LEVEL = 1;
+const LEVEL_COUNT = 2;                 // distinct levels in the loop (1 = grass, 2 = cave)
+const CARDS_PER_LEVEL = 10;            // upgrade cards taken within a level before it ends
+// The run loops forever: level 1 -> 2 -> 1 -> 2 ... Every time it wraps back to level 1 a
+// new, harder cycle begins. Enemies gain a flat HP bump and a flat speed bump per cycle
+// (cycle 0 = base stats), so each pass through the same level is tougher than the last.
+const CYCLE_HP_STEP = 10;
+const CYCLE_SPEED_STEP = 0.05;
+// Kills per upgrade card. The first cycle uses BUFF_EVERY_KILLS; every cycle after that
+// asks for more, so cards (and the buffs and level wraps they drive) come slower once the
+// enemies turn tanky.
+const KILLS_PER_CARD_LATER = 20;
+function killsPerCard() { return cycle === 0 ? BUFF_EVERY_KILLS : KILLS_PER_CARD_LATER; }
+
+// Which level is active (1 = grass/knights, 2 = cave/trolls), how many full loops have
+// been completed, when the level began (so the spawn ramp restarts each level), and the
+// buff count when it began (so per-level card unlocks reset while buffs still carry over).
 let level = 1;
+let cycle = 0;
 let levelStartedAt = 0;
+let levelCardBaseline = 0;
+let killCardBaseline = 0;      // kills the last upgrade card was awarded at (for pacing)
 
 const state = {
   running: false,
@@ -411,6 +456,7 @@ const MOVE_KEYS = { KeyW: "up", KeyA: "left", KeyS: "down", KeyD: "right" };
 let playerAttackUntil = 0;
 let playerHurtUntil = 0;
 let lastArrowFiredAt = -DEFAULT_ATTACK_INTERVAL_MS; // far in the past = ready to fire
+let lastOmniFireAt = 0;                             // when the last automatic omni volley fired
 // A shot triggered but whose arrow hasn't left the bow yet.
 let pendingShot = null;
 
@@ -506,7 +552,9 @@ function shiftTimers(delta) {
   playerAttackUntil += delta;
   playerHurtUntil += delta;
   damageFlashUntil += delta;
+  invulnUntil += delta;
   lastArrowFiredAt += delta;
+  lastOmniFireAt += delta;
   if (pendingShot) pendingShot.releaseAt += delta;
   for (const e of state.enemies) {
     e.moveStartAt += delta;
@@ -583,7 +631,7 @@ function queueMove(dx, dy) {
   const ny = p.y + dy;
   if (nx < 0 || nx >= MAP_COLS || ny < 0 || ny >= MAP_ROWS) return false;
   if (cellSolid(nx, ny)) return false;
-  if (isEnemyAt(nx, ny)) return false;
+  if (isEnemyAt(nx, ny) && !playerPhasing(performance.now())) return false;
   // Block diagonal squeezes: if both cardinal neighbors are solid, no diagonal.
   if (dx !== 0 && dy !== 0) {
     const sideABlocked = cellSolid(nx, p.y);
@@ -645,13 +693,40 @@ function releasePendingShot(now) {
   const tileY = state.player.moving ? state.player.toY : state.player.y;
   const px = (tileX + 0.5) * TILE_SIZE;
   const py = (tileY + 0.5) * TILE_SIZE;
-  // Both spread around the aim: Omni fires 8 arrows 45 degrees apart starting at the
-  // aimed one; Multi-Shot a 3-arrow fan 45 degrees either side of it.
-  let angles;
-  if (playerOmniShot) angles = [0, 1, 2, 3, 4, 5, 6, 7].map((i) => angle + i * Math.PI / 4);
-  else if (playerMultiShot) angles = [angle, angle - Math.PI / 4, angle + Math.PI / 4];
-  else angles = [angle];
+  // Manual fire is a single arrow, or a 3-arrow fan 10 degrees either side of the aim
+  // with Multi-Shot. Omni-Shot is a separate automatic volley (see maybeFireOmni).
+  const angles = playerMultiShot
+    ? [angle, angle - Math.PI / 18, angle + Math.PI / 18]
+    : [angle];
   for (const a of angles) {
+    state.projectiles.push({
+      px, py,
+      vx: Math.cos(a) * ARROW_SPEED,
+      vy: Math.sin(a) * ARROW_SPEED,
+      angle: a,
+      traveled: 0,
+      lastStepAt: now,
+      hitEnemies: new Set(),
+    });
+  }
+  playSfx("bow", 10);
+}
+
+// Omni-Shot: once taken, an automatic 8-direction volley fires on its own timer,
+// independent of manual shooting. Higher levels fire it faster. The arrows are ordinary
+// arrows, so they scale with damage, piercing and distance cards (never with fire rate).
+const OMNI_INTERVAL_MS = [0, 8000, 7000, 6000]; // milliseconds between volleys, indexed by omniLevel
+
+function maybeFireOmni(now) {
+  if (omniLevel <= 0) return;
+  if (now - lastOmniFireAt < OMNI_INTERVAL_MS[omniLevel]) return;
+  lastOmniFireAt = now;
+  const tileX = state.player.moving ? state.player.toX : state.player.x;
+  const tileY = state.player.moving ? state.player.toY : state.player.y;
+  const px = (tileX + 0.5) * TILE_SIZE;
+  const py = (tileY + 0.5) * TILE_SIZE;
+  for (let i = 0; i < 8; i++) {
+    const a = i * Math.PI / 4;
     state.projectiles.push({
       px, py,
       vx: Math.cos(a) * ARROW_SPEED,
@@ -699,9 +774,12 @@ let flowMap = null;
 function goalFlowField(goalX, goalY) {
   const mapRef = level === 2 ? l2Grid() : state.tileMap;
   if (flowField === null || goalX !== flowGoalX || goalY !== flowGoalY || flowMap !== mapRef) {
+    // Terrain cost = inverse of how fast the tile is walked, so cheaper (faster) path
+    // tiles pull routes toward themselves even when the detour is a little longer.
+    const cost = (x, y) => 1 / cellSpeedMult(x, y);
     flowField = level === 2
-      ? buildFlowField(goalX, goalY, null, (x, y) => l2Solid(x, y))
-      : buildFlowField(goalX, goalY, state.tileMap);
+      ? buildFlowField(goalX, goalY, null, (x, y) => l2Solid(x, y), cost)
+      : buildFlowField(goalX, goalY, state.tileMap, null, cost);
     flowGoalX = goalX;
     flowGoalY = goalY;
     flowMap = mapRef;
@@ -709,9 +787,17 @@ function goalFlowField(goalX, goalY) {
   return flowField;
 }
 
-// Target on-screen enemy count for the current run time, ramping to MAX_ENEMIES.
-function targetEnemyCount(elapsed) {
-  return Math.min(MAX_ENEMIES, SPAWN_TARGET_START + Math.floor(elapsed / SPAWN_TARGET_RAMP_MS));
+// Performance safety cap, raised each cycle so later runs can still swarm.
+function maxEnemies() { return MAX_ENEMIES_BASE + MAX_ENEMIES_PER_CYCLE * cycle; }
+// Target on-screen enemy count: 6 plus 3 for every card taken across the whole run,
+// clamped only by the performance cap. Difficulty climbs forever with progress.
+function targetEnemyCount() {
+  return Math.min(maxEnemies(), SPAWN_TARGET_START + SPAWN_TARGET_PER_CARD * buffsAwarded);
+}
+// Top-up cadence tied to cards: 600ms at the start, shortening toward the floor as cards
+// pile up. This is what lets the board actually reach the high late-game targets.
+function spawnIntervalMs() {
+  return Math.max(SPAWN_INTERVAL_FLOOR, SPAWN_INTERVAL_BASE - SPAWN_INTERVAL_PER_CARD * buffsAwarded);
 }
 
 function spawnEnemyAt(fort, now) {
@@ -749,17 +835,16 @@ function spawnEnemyAt(fort, now) {
 }
 
 function maybeSpawnEnemy(now) {
-  if (now - state.lastSpawnAt < SPAWN_INTERVAL_MS) return;
-  // Relative to when this level began, so level 2's ramp restarts (sparse then builds).
-  const elapsed = now - levelStartedAt;
-  const deficit = targetEnemyCount(elapsed) - state.enemies.length;
+  if (now - state.lastSpawnAt < spawnIntervalMs()) return;
+  const deficit = targetEnemyCount() - state.enemies.length;
   if (deficit <= 0) return;
   // Spawn only on this level's points that no enemy occupies (never stack on a tile).
   const openForts = levelSpawns().filter((s) => !isEnemyAt(s.x, s.y));
   if (openForts.length === 0) return;
-  // Top up toward the target. The batch grows late game so the board can refill
-  // faster than a strong build clears it. Shuffle so the batch uses distinct forts.
-  const batch = 1 + Math.floor(elapsed / SPAWN_BATCH_RAMP_MS);
+  // Top up toward the target. The batch grows with cards (capped by the fort count anyway)
+  // so a new level refills toward its high target quickly instead of easing in each time.
+  // Shuffle so the batch uses distinct forts.
+  const batch = 1 + Math.floor(buffsAwarded / 2);
   const count = Math.min(deficit, openForts.length, batch);
   for (let i = openForts.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
@@ -811,7 +896,7 @@ function stepEnemies(now) {
       else if (goalX < enemy.x) enemy.facing = "left";
       continue;
     }
-    const next = nextStepFromField(field, enemy.x, enemy.y);
+    const next = nextStepFromField(field, enemy.x, enemy.y, cellSolid);
     if (next === null) continue;
     enemy.fromX = enemy.x;
     enemy.fromY = enemy.y;
@@ -819,7 +904,9 @@ function stepEnemies(now) {
     enemy.toY = next.y;
     if (next.x > enemy.x) enemy.facing = "right";
     else if (next.x < enemy.x) enemy.facing = "left";
-    enemy.moveDuration = enemyStepDuration(enemy.type, next.x, next.y);
+    let dur = enemyStepDuration(enemy.type, next.x, next.y);
+    if (next.x !== enemy.x && next.y !== enemy.y) dur = Math.round(dur * DIAG_DURATION_FACTOR);
+    enemy.moveDuration = dur;
     enemy.moveStartAt = now;
     enemy.moving = true;
   }
@@ -837,6 +924,17 @@ function isEnemyAt(x, y) {
     if (e.moving && e.toX === x && e.toY === y) return true;
   }
   return false;
+}
+
+// While invulnerable the ranger phases through enemies (never through walls, water,
+// rocks or trees, which cellSolid still blocks). If the window ends while the ranger is
+// still stacked on an enemy, phasing persists until it reaches an enemy-free tile.
+function playerPhasing(now) {
+  if (now < invulnUntil) return true;
+  const p = state.player;
+  const tx = p.moving ? p.toX : p.x;
+  const ty = p.moving ? p.toY : p.y;
+  return isEnemyAt(tx, ty);
 }
 
 // Hit radius around an enemy's center. Smaller than a tile so the hitbox tracks
@@ -911,6 +1009,7 @@ function damageEnemy(enemy, now) {
 function damagePlayer(now, dmg) {
   const p = state.player;
   if (p.dying) return;
+  if (now < invulnUntil) return; // ignore hits during the invulnerability window
   state.lives = Math.max(0, state.lives - dmg);
   playSfx("hurt");
   damageFlashUntil = now + DAMAGE_FLASH_MS;
@@ -918,6 +1017,7 @@ function damagePlayer(now, dmg) {
     startPlayerDeath(now);
   } else {
     playerHurtUntil = now + HURT_HOLD_MS;
+    invulnUntil = now + INVULN_MS;
   }
 }
 
@@ -1133,6 +1233,9 @@ function renderPlayer(now) {
   const atkSpeed = p.anim === "ATTACK" ? fireRateMult : 1;
   const frameIndex = animFrameIndex(p.animStart, now, p.anim, once, atkSpeed);
 
+  // Invulnerability blink: flicker the ranger on and off while the i-frames are active.
+  if (now < invulnUntil && Math.floor(now / 120) % 2 === 1) return;
+
   if (!drawAnim(playerCell(), p.anim, frameIndex, centerX, baseY, p.facing === "left")) {
     // Fallback if the sheet failed to load.
     ctx.fillStyle = "#7ed957";
@@ -1215,15 +1318,31 @@ function startLevelTransition(now) {
   mouseDown = false;
   heldMoveKeys.clear();
   pendingShot = null;
-  render(now); // snapshot the current (level 1) scene
-  transition = { phase: "out", startAt: now, snap: snapshotCanvas() };
-  generateLevel2(sprites); // build the cave map + background while the screen fades out
+  render(now); // snapshot the current scene to pixelate out
+  // Advance to the next level, wrapping past the last one back to level 1 (a new cycle).
+  // The map is built by enterLevel at the fade-out end, while the screen is fully black,
+  // so the brief generation hitch is hidden.
+  const nextLevel = level >= LEVEL_COUNT ? 1 : level + 1;
+  transition = { phase: "out", startAt: now, snap: snapshotCanvas(), next: nextLevel };
 }
 
-// Drop the player into the middle of level 2. Kills and buffs carry over; enemies,
-// projectiles and the spawn clock reset.
-function enterLevelTwo(now) {
-  level = 2;
+// Build the map for a level. Level 1 uses the mapgen tile grid; later levels build their
+// own. Add a branch here for each new level.
+function setupLevelMap(n) {
+  if (n === 2) generateLevel2(sprites);
+  else state.tileMap = buildStartingMap();
+}
+
+// Enter a level: generate its map, drop the player in the middle, clear enemies and
+// projectiles, restart the spawn clock, and switch to its music. Kills and buffs carry
+// over. Used both by the fade transition and by the START_LEVEL design shortcut.
+function enterLevel(n, now) {
+  // Returning to level 1 means the loop wrapped, so start a new, harder cycle. enterLevel
+  // is only ever reached for level 1 through that wrap (never at the initial start, which
+  // goes through resetState), so this counts real loops.
+  if (n === 1) cycle += 1;
+  level = n;
+  levelCardBaseline = buffsAwarded; // per-level card unlocks reset; buffs still carry over
   state.enemies = [];
   state.projectiles = [];
   pendingShot = null;
@@ -1236,9 +1355,14 @@ function enterLevelTwo(now) {
   playerAttackUntil = 0;
   playerHurtUntil = 0;
   damageFlashUntil = 0;
+  invulnUntil = 0;
   lastArrowFiredAt = -DEFAULT_ATTACK_INTERVAL_MS;
-  flowField = null; // rebuild the flow field for the cave grid
-  playGameMusic(2); // level 2 plays its own randomized playlist
+  lastOmniFireAt = now;   // omni volleys start fresh in the new level
+  flowField = null;       // rebuild the flow field for the new map
+  setupLevelMap(n);
+  levelStartedAt = now;
+  state.lastSpawnAt = now;
+  playGameMusic(n);       // each level plays its own randomized playlist
 }
 
 function renderTransition(now) {
@@ -1246,8 +1370,8 @@ function renderTransition(now) {
   if (transition.phase === "out") {
     drawPixelated(transition.snap, t);
     if (t >= 1) {
-      enterLevelTwo(now);
-      render(now); // draw the initial cave frame, then snapshot it to pixelate in
+      enterLevel(transition.next, now);
+      render(now); // draw the initial frame of the new level, then snapshot it to pixelate in
       transition = { phase: "in", startAt: now, snap: snapshotCanvas() };
     }
   } else {
@@ -1269,8 +1393,9 @@ function renderTransition(now) {
 function loop(now) {
   if (!state.running || state.paused || state.choosingBuff) return;
   if (state.transitioning) { renderTransition(now); requestAnimationFrame(loop); return; }
-  // Level 1 ends the moment the 8th upgrade card has been taken: fade into level 2.
-  if (level === 1 && buffsAwarded >= CARDS_TO_LEVEL2 && !state.player.dying) {
+  // A level ends once CARDS_PER_LEVEL cards have been taken in it; fade into the next one
+  // (which loops back to level 1 forever, each wrap a harder cycle).
+  if (!state.player.dying && levelCards() >= CARDS_PER_LEVEL) {
     startLevelTransition(now);
     requestAnimationFrame(loop);
     return;
@@ -1287,15 +1412,19 @@ function loop(now) {
       stepProjectiles(now);
       if (mouseDown) fireFromAim();
       releasePendingShot(now);
+      maybeFireOmni(now);
       stepEnemies(now);
       resolveCollisions();
       render(now);
       updateHud(now, state);
-      if (state.kills >= (buffsAwarded + 1) * BUFF_EVERY_KILLS) startBuffSelection(now, buffGame);
+      if (state.kills - killCardBaseline >= killsPerCard()) {
+        killCardBaseline = state.kills;
+        startBuffSelection(now, buffGame);
+      }
     }
   } catch (err) {
     // Keep one frame's exception from killing the rAF chain.
-    console.error("ranger-survivor loop error:", err);
+    console.error("recurve loop error:", err);
   }
   requestAnimationFrame(loop);
 }
@@ -1308,7 +1437,6 @@ function start() {
   resetState();
   state.running = true;
   state.paused = false;
-  playGameMusic(1);
   state.startedAt = performance.now();
   state.lastSpawnAt = state.startedAt;
   levelStartedAt = state.startedAt;
@@ -1316,15 +1444,25 @@ function start() {
   resetScoreForm(false);
   overlay.classList.add("hidden");
   canvas.focus();
+  if (START_LEVEL > 1) {
+    // Design shortcut: jump straight into the chosen level, skipping the earlier ones
+    // and the fade transition.
+    enterLevel(START_LEVEL, performance.now());
+  } else {
+    playGameMusic(1);
+  }
   requestAnimationFrame(loop);
 }
 
 function resetState() {
   const ranger = rangerStats(selectedArcher);
   level = 1;
+  cycle = 0;
+  levelCardBaseline = 0;
   state.transitioning = false;
   transition = null;
   state.kills = 0;
+  killCardBaseline = 0;
   state.maxLives = ranger.hearts;
   state.lives = ranger.hearts;
   state.choosingBuff = false;
@@ -1337,7 +1475,9 @@ function resetState() {
   playerAttackUntil = 0;
   playerHurtUntil = 0;
   damageFlashUntil = 0;
+  invulnUntil = 0;
   lastArrowFiredAt = -DEFAULT_ATTACK_INTERVAL_MS;
+  lastOmniFireAt = 0;
   pendingShot = null;
   mouseDown = false;
   resetRunStats(ranger);
@@ -1388,7 +1528,7 @@ function showRangerHud() {
 }
 
 try {
-  const saved = parseInt(localStorage.getItem("ranger-survivor.archer"), 10);
+  const saved = parseInt(localStorage.getItem("recurve.archer"), 10);
   if (!Number.isNaN(saved) && saved >= 0 && saved < ARCHER_SHEETS.length) selectedArcher = saved;
 } catch (_) { /* localStorage may be disabled */ }
 
@@ -1465,7 +1605,7 @@ for (const card of charCards) {
     if (card.index !== selectedArcher) playSfx("select", 4); // only when switching
     selectedArcher = card.index;
     showRangerHud();
-    try { localStorage.setItem("ranger-survivor.archer", String(selectedArcher)); } catch (_) { /* ignore */ }
+    try { localStorage.setItem("recurve.archer", String(selectedArcher)); } catch (_) { /* ignore */ }
   });
 }
 

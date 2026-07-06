@@ -1,6 +1,6 @@
-package com.rangersurvivor;
+package com.recurve;
 
-import com.rangersurvivor.service.ProfanityFilter;
+import com.recurve.service.ProfanityFilter;
 import org.junit.jupiter.api.Test;
 
 import java.util.concurrent.atomic.AtomicInteger;

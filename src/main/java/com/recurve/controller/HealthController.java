@@ -1,4 +1,4 @@
-package com.rangersurvivor.controller;
+package com.recurve.controller;
 
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.CrossOrigin;

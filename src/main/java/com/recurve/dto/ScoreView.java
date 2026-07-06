@@ -1,6 +1,6 @@
-package com.rangersurvivor.dto;
+package com.recurve.dto;
 
-import com.rangersurvivor.model.Score;
+import com.recurve.model.Score;
 
 import java.time.Instant;
 

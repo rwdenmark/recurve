@@ -1,6 +1,6 @@
-package com.rangersurvivor;
+package com.recurve;
 
-import com.rangersurvivor.service.GameSessionService;
+import com.recurve.service.GameSessionService;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;

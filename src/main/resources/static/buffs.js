@@ -23,7 +23,7 @@ export let playerDamage = DEFAULT_DAMAGE;
 export let playerSpeedMult = 1.0;
 export let fireRateMult = 1.0;
 export let playerMultiShot = false;
-export let playerOmniShot = false;
+export let omniLevel = 0;              // omni-shot tier: 0 = not taken, 1-3 = auto-fire levels
 export let playerPierce = 0;            // extra enemies an arrow passes through
 export let playerArrowRange = ARROW_MAX_RANGE;
 export let buffsAwarded = 0;
@@ -31,7 +31,7 @@ export let buffsAwarded = 0;
 // ---------------------------------------------------------------------------
 // Upgrade cards: every BUFF_EVERY_KILLS kills, pause and offer 3 random buffs.
 // ---------------------------------------------------------------------------
-export const BUFF_EVERY_KILLS = 15;
+export const BUFF_EVERY_KILLS = 10;
 const STACK_CAP = 10;           // max copies of a stacking buff
 const buffOverlay = document.getElementById("buff-overlay");
 const buffCardsEl = document.getElementById("buff-cards");
@@ -52,25 +52,32 @@ const BUFF_CARDS = [
     apply: () => { fireRateMult += 0.5; } },      // additive: +50% of base each card
   { title: "Increase Damage", stacking: true, available: () => true,
     apply: () => { playerDamage += DEFAULT_DAMAGE; } },
-  { title: "Arrow Piercing", stacking: true, available: () => true,
+  { title: "Arrow Piercing", stacking: true, cap: 3, dots: 3, available: () => true,
     apply: () => { playerPierce += 1; } },
   { title: "Arrow Distance", stacking: true, available: () => true,
     apply: () => { playerArrowRange += 1; } },
   { title: "Multi-Shot", available: () => !playerMultiShot, // one-time
     apply: () => { playerMultiShot = true; } },
-  { title: "Omni-Shot", available: () => playerMultiShot && !playerOmniShot, // unlocked by Multi-Shot
-    apply: () => { playerOmniShot = true; } },
+  // Omni-Shot: unlocked by Multi-Shot, stacks to 3 (shown as 3 dots). Each level makes the
+  // automatic 8-direction volley fire faster (the omni timer lives in game.js).
+  { title: "Omni-Shot", stacking: true, cap: 3, dots: 3, available: () => playerMultiShot,
+    apply: () => { omniLevel += 1; } },
 ];
 
 function pickBuffCards(n, s) {
   // Stacking buffs drop out of the pool once they reach STACK_CAP copies.
   const pool = BUFF_CARDS.filter((c) =>
-    c.available(s) && !(c.stacking && (c.taken || 0) >= STACK_CAP));
-  for (let i = pool.length - 1; i > 0; i--) {
+    c.available(s) && !(c.stacking && (c.taken || 0) >= (c.cap || STACK_CAP)));
+  // Heal to Full is a bonus, never filler. Once every other upgrade is taken or maxed,
+  // drop it so a fully upgraded run stops getting card screens (and heals) and can reach
+  // its end, instead of being offered a free heal every threshold forever.
+  const others = pool.filter((c) => c.title !== "Heal to Full");
+  const finalPool = others.length === 0 ? others : pool;
+  for (let i = finalPool.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
-    [pool[i], pool[j]] = [pool[j], pool[i]];
+    [finalPool[i], finalPool[j]] = [finalPool[j], finalPool[i]];
   }
-  return pool.slice(0, Math.min(n, pool.length));
+  return finalPool.slice(0, Math.min(n, finalPool.length));
 }
 
 // `game` is the handle game.js passes in: { state, shiftTimers, clearHeldInput,
@@ -87,10 +94,12 @@ export function startBuffSelection(now, game) {
     const el = document.createElement("button");
     el.type = "button";
     el.className = "buff-card";
-    // Stacking buffs show STACK_CAP circles, filled by how many copies you hold.
+    // Stacking buffs show a row of circles (STACK_CAP, or the card's own cap), filled by
+    // how many copies you hold.
+    const dotCount = card.dots || STACK_CAP;
     const dots = card.stacking
       ? `<span class="buff-dots">` +
-        Array.from({ length: STACK_CAP }, (_, i) =>
+        Array.from({ length: dotCount }, (_, i) =>
           `<span class="buff-dot${i < (card.taken || 0) ? " full" : ""}"></span>`).join("") +
         `</span>`
       : "";
@@ -118,7 +127,7 @@ export function resetRunStats(ranger) {
   playerSpeedMult = ranger.speed;
   fireRateMult = ranger.fireRate;
   playerMultiShot = false;
-  playerOmniShot = false;
+  omniLevel = 0;
   playerPierce = 0;
   playerArrowRange = ARROW_MAX_RANGE;
   buffsAwarded = 0;

@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: ranger-survivor
+    name: recurve
     runtime: docker
     plan: free
     region: oregon

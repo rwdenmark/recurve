@@ -1,5 +1,5 @@
 {
-  "name": "ranger-survivor-frontend",
+  "name": "recurve-frontend",
   "private": true,
   "type": "module",
   "description": "Frontend tests for the canvas game. The Spring Boot backend is built with Maven. This only covers the pure JS modules under src/main/resources/static.",
