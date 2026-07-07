@@ -3,7 +3,7 @@ package com.recurve;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.recurve.service.GameSessionService;
 import com.recurve.service.ProfanityFilter;
-import com.recurve.service.SubmissionRateLimiter;
+import com.recurve.service.ClientRateLimiter;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -46,7 +46,7 @@ class ScoreControllerTest {
 
     // The live limiter bean, reset per test so no test inherits another's window.
     @Autowired
-    private SubmissionRateLimiter rateLimiter;
+    private ClientRateLimiter rateLimiter;
 
     @BeforeEach
     void defaults() {
@@ -117,6 +117,37 @@ class ScoreControllerTest {
         mockMvc.perform(post("/api/scores")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(json("ry\u200Ban", 10, 60)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Name contains invisible or control characters"));
+    }
+
+    @Test
+    void variationSelectorNameIsRejected() throws Exception {
+        // U+FE0F renders as nothing on its own, so it can pad an otherwise identical name.
+        mockMvc.perform(post("/api/scores")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json("ryan\uFE0F", 10, 60)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Name contains invisible or control characters"));
+    }
+
+    @Test
+    void tagCharacterNameIsRejected() throws Exception {
+        // Tag characters (U+E0000-E007F) are invisible and can smuggle hidden text.
+        // The surrogate pair below is U+E0041, TAG LATIN CAPITAL LETTER A.
+        mockMvc.perform(post("/api/scores")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json("ryan\uDB40\uDC41", 10, 60)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Name contains invisible or control characters"));
+    }
+
+    @Test
+    void variationSelectorSupplementNameIsRejected() throws Exception {
+        // The surrogate pair below is U+E0100, VARIATION SELECTOR-17, outside the BMP.
+        mockMvc.perform(post("/api/scores")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json("ryan\uDB40\uDD00", 10, 60)))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value("Name contains invisible or control characters"));
     }

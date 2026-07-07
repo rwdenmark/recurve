@@ -13,7 +13,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * matching the free-tier deployment. Move to a shared store to scale out.
  */
 @Service
-public class SubmissionRateLimiter {
+public class ClientRateLimiter {
 
     private static final int DEFAULT_MAX_PER_WINDOW = 10;
     private static final long WINDOW_MS = 60_000;
@@ -23,12 +23,12 @@ public class SubmissionRateLimiter {
     private final Map<String, Deque<Long>> hits = new ConcurrentHashMap<>();
     private final AtomicInteger callsSinceSweep = new AtomicInteger();
 
-    public SubmissionRateLimiter() {
+    public ClientRateLimiter() {
         this(DEFAULT_MAX_PER_WINDOW);
     }
 
     // For callers that need their own budget, like the game-start endpoint.
-    public SubmissionRateLimiter(int maxPerWindow) {
+    public ClientRateLimiter(int maxPerWindow) {
         this.maxPerWindow = maxPerWindow;
     }
 

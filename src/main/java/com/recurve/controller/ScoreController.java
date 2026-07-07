@@ -7,7 +7,7 @@ import com.recurve.repository.ScoreRepository;
 import com.recurve.service.GameSessionService;
 import com.recurve.service.ProfanityFilter;
 import com.recurve.service.SpawnModel;
-import com.recurve.service.SubmissionRateLimiter;
+import com.recurve.service.ClientRateLimiter;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.data.domain.PageRequest;
@@ -36,12 +36,12 @@ public class ScoreController {
 
     private final ScoreRepository scoreRepository;
     private final ProfanityFilter profanityFilter;
-    private final SubmissionRateLimiter rateLimiter;
+    private final ClientRateLimiter rateLimiter;
     private final GameSessionService sessions;
 
     public ScoreController(ScoreRepository scoreRepository,
                            ProfanityFilter profanityFilter,
-                           SubmissionRateLimiter rateLimiter,
+                           ClientRateLimiter rateLimiter,
                            GameSessionService sessions) {
         this.scoreRepository = scoreRepository;
         this.profanityFilter = profanityFilter;
@@ -97,16 +97,22 @@ public class ScoreController {
 
     // Loose whitelist. Real names in any language pass. What gets rejected are the
     // characters that render as nothing or reorder text (bidi controls, zero-width
-    // joiners, BOM) plus ordinary control characters, since any of those can blank
-    // or spoof a leaderboard row. Same rule and list as astro-siege.
+    // joiners, BOM, variation selectors, tag characters) plus ordinary control
+    // characters, since any of those can blank or spoof a leaderboard row. Iterates
+    // by code point because tag characters and the variation selectors supplement
+    // sit outside the BMP.
     private static boolean containsInvisible(String name) {
-        for (int i = 0; i < name.length(); i++) {
-            char c = name.charAt(i);
-            if (Character.isISOControl(c)) return true;
-            if (c >= '\u202A' && c <= '\u202E') return true; // bidi embeddings and overrides
-            if (c >= '\u2066' && c <= '\u2069') return true; // bidi isolates
-            if (c >= '\u200B' && c <= '\u200D') return true; // zero-width space and joiners
-            if (c == '\u2060' || c == '\uFEFF') return true; // word joiner and BOM
+        for (int i = 0; i < name.length(); ) {
+            int cp = name.codePointAt(i);
+            if (Character.isISOControl(cp)) return true;
+            if (cp >= 0x202A && cp <= 0x202E) return true;   // bidi embeddings and overrides
+            if (cp >= 0x2066 && cp <= 0x2069) return true;   // bidi isolates
+            if (cp >= 0x200B && cp <= 0x200D) return true;   // zero-width space and joiners
+            if (cp == 0x2060 || cp == 0xFEFF) return true;   // word joiner and BOM
+            if (cp >= 0xFE00 && cp <= 0xFE0F) return true;   // variation selectors
+            if (cp >= 0xE0000 && cp <= 0xE007F) return true; // tag characters
+            if (cp >= 0xE0100 && cp <= 0xE01EF) return true; // variation selectors supplement
+            i += Character.charCount(cp);
         }
         return false;
     }

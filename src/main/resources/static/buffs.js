@@ -30,9 +30,11 @@ export let playerArrowRange = ARROW_MAX_RANGE;
 export let buffsAwarded = 0;
 
 // ---------------------------------------------------------------------------
-// Upgrade cards: every BUFF_EVERY_KILLS kills, pause and offer 3 random buffs.
+// Upgrade cards: every KILLS_PER_CARD_FIRST_CYCLE kills through the first cycle,
+// pause and offer 3 random buffs. Later cycles pace by KILLS_PER_CARD_LATER in
+// game.js, and SpawnModel.java mirrors both names.
 // ---------------------------------------------------------------------------
-export const BUFF_EVERY_KILLS = 10;
+export const KILLS_PER_CARD_FIRST_CYCLE = 10;
 const STACK_CAP = 10;           // max copies of a stacking buff
 const buffOverlay = document.getElementById("buff-overlay");
 const buffCardsEl = document.getElementById("buff-cards");

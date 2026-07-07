@@ -19,7 +19,7 @@ import {
   DEFAULT_HEALTH, DEFAULT_DAMAGE, DEFAULT_ATTACK_INTERVAL_MS, DEFAULT_MOVE_DURATION_MS,
   playerDamage, playerSpeedMult, fireRateMult, playerMultiShot, omniLevel,
   playerPierce, playerArrowRange, buffsAwarded,
-  BUFF_EVERY_KILLS, startBuffSelection, resetRunStats,
+  KILLS_PER_CARD_FIRST_CYCLE, startBuffSelection, resetRunStats,
 } from "./buffs.js";
 import {
   refreshLeaderboard, startGameSession, setLastRunDuration, resetScoreForm, initScoreForm,
@@ -238,11 +238,10 @@ function rangerStats(i) {
 
 const canvas = document.getElementById("game");
 // Size the canvas before getContext, since resizing resets context state.
-const DISPLAY_SCALE = 1.0;
 canvas.width = MAP_COLS * TILE_SIZE;
 canvas.height = MAP_ROWS * TILE_SIZE;
-canvas.style.width = `${canvas.width * DISPLAY_SCALE}px`;
-canvas.style.height = `${canvas.height * DISPLAY_SCALE}px`;
+canvas.style.width = `${canvas.width}px`;
+canvas.style.height = `${canvas.height}px`;
 const ctx = canvas.getContext("2d");
 ctx.imageSmoothingEnabled = false;
 
@@ -292,11 +291,11 @@ const CARDS_PER_LEVEL = 10;            // upgrade cards taken within a level bef
 // (cycle 0 = base stats), so each pass through the same level is tougher than the last.
 const CYCLE_HP_STEP = 10;
 const CYCLE_SPEED_STEP = 0.05;
-// Kills per upgrade card. The first cycle uses BUFF_EVERY_KILLS. Every cycle after that
-// asks for more, so cards (and the buffs and level wraps they drive) come slower once the
-// enemies turn tanky.
+// Kills per upgrade card. The first cycle uses KILLS_PER_CARD_FIRST_CYCLE (buffs.js).
+// Every cycle after that asks for more, so cards (and the buffs and level wraps they
+// drive) come slower once the enemies turn tanky. SpawnModel.java mirrors both names.
 const KILLS_PER_CARD_LATER = 20;
-function killsPerCard() { return cycle === 0 ? BUFF_EVERY_KILLS : KILLS_PER_CARD_LATER; }
+function killsPerCard() { return cycle === 0 ? KILLS_PER_CARD_FIRST_CYCLE : KILLS_PER_CARD_LATER; }
 
 // Which level is active (1 = grass/knights, 2 = cave/trolls), how many full loops have
 // been completed, and the buff count when the level began (so per-level card unlocks
@@ -363,6 +362,9 @@ function cellSpeedMult(x, y) {
 // ---------------------------------------------------------------------------
 
 const sprites = {};
+// Flips once loadSprites resolves, so the level 1 background bake knows whether
+// it painted real sprites or the pre-load fallback colors.
+let spritesReady = false;
 
 function loadSprites() {
   const tasks = Object.entries(SPRITE_PATHS).map(([key, path]) => {
@@ -382,11 +384,12 @@ function loadSprites() {
   return Promise.all(tasks);
 }
 
-function drawSprite(srcDef, dx, dy, dw, dh) {
+// Draws into `g`, not the main ctx, so the same code paints the baked background.
+function drawSprite(g, srcDef, dx, dy, dw, dh) {
   if (!srcDef) return;
   const sheet = sprites[srcDef.sheet];
   if (!sheet) return;
-  ctx.drawImage(sheet, srcDef.x, srcDef.y, srcDef.w, srcDef.h, dx, dy, dw, dh);
+  g.drawImage(sheet, srcDef.x, srcDef.y, srcDef.w, srcDef.h, dx, dy, dw, dh);
 }
 
 // ---------------------------------------------------------------------------
@@ -488,11 +491,16 @@ function setMouseFromEvent(event) {
   mouseY = (event.clientY - rect.top) * (canvas.height / rect.height);
 }
 
+// The player's authoritative tile (destination of any in-flight move).
+function playerTile() {
+  const p = state.player;
+  return { x: p.moving ? p.toX : p.x, y: p.moving ? p.toY : p.y };
+}
+
 // The player's authoritative pixel center (destination of any in-flight move).
 function playerCenterPx() {
-  const px = state.player.moving ? state.player.toX : state.player.x;
-  const py = state.player.moving ? state.player.toY : state.player.y;
-  return { x: px * TILE_SIZE + TILE_SIZE / 2, y: py * TILE_SIZE + TILE_SIZE / 2 };
+  const t = playerTile();
+  return { x: t.x * TILE_SIZE + TILE_SIZE / 2, y: t.y * TILE_SIZE + TILE_SIZE / 2 };
 }
 
 // Exact angle (radians) from the player to the cursor, for free-aim shots.
@@ -663,20 +671,12 @@ function fireArrow(angle) {
   pendingShot = { angle, releaseAt: now + ARROW_RELEASE_MS / fireRateMult };
 }
 
-function releasePendingShot(now) {
-  if (!pendingShot || now < pendingShot.releaseAt) return;
-  const { angle } = pendingShot;
-  pendingShot = null;
-  // Spawn from the center of the player's authoritative tile (destination of any move).
-  const tileX = state.player.moving ? state.player.toX : state.player.x;
-  const tileY = state.player.moving ? state.player.toY : state.player.y;
-  const px = (tileX + 0.5) * TILE_SIZE;
-  const py = (tileY + 0.5) * TILE_SIZE;
-  // Manual fire is a single arrow, or a 3-arrow fan 10 degrees either side of the aim
-  // with Multi-Shot. Omni-Shot is a separate automatic volley (see maybeFireOmni).
-  const angles = playerMultiShot
-    ? [angle, angle - Math.PI / 18, angle + Math.PI / 18]
-    : [angle];
+// Spawn one ordinary arrow per angle from the center of the player's authoritative
+// tile (destination of any move). Shared by manual shots and omni volleys.
+function spawnArrows(angles, now) {
+  const t = playerTile();
+  const px = (t.x + 0.5) * TILE_SIZE;
+  const py = (t.y + 0.5) * TILE_SIZE;
   for (const a of angles) {
     state.projectiles.push({
       px, py,
@@ -691,6 +691,18 @@ function releasePendingShot(now) {
   playSfx("bow", 10);
 }
 
+function releasePendingShot(now) {
+  if (!pendingShot || now < pendingShot.releaseAt) return;
+  const { angle } = pendingShot;
+  pendingShot = null;
+  // Manual fire is a single arrow, or a 3-arrow fan 10 degrees either side of the aim
+  // with Multi-Shot. Omni-Shot is a separate automatic volley (see maybeFireOmni).
+  const angles = playerMultiShot
+    ? [angle, angle - Math.PI / 18, angle + Math.PI / 18]
+    : [angle];
+  spawnArrows(angles, now);
+}
+
 // Omni-Shot: once taken, an automatic 8-direction volley fires on its own timer,
 // independent of manual shooting. Higher levels fire it faster. The arrows are ordinary
 // arrows, so they scale with damage, piercing and distance cards (never with fire rate).
@@ -700,23 +712,7 @@ function maybeFireOmni(now) {
   if (omniLevel <= 0) return;
   if (now - lastOmniFireAt < OMNI_INTERVAL_MS[omniLevel]) return;
   lastOmniFireAt = now;
-  const tileX = state.player.moving ? state.player.toX : state.player.x;
-  const tileY = state.player.moving ? state.player.toY : state.player.y;
-  const px = (tileX + 0.5) * TILE_SIZE;
-  const py = (tileY + 0.5) * TILE_SIZE;
-  for (let i = 0; i < 8; i++) {
-    const a = i * Math.PI / 4;
-    state.projectiles.push({
-      px, py,
-      vx: Math.cos(a) * ARROW_SPEED,
-      vy: Math.sin(a) * ARROW_SPEED,
-      angle: a,
-      traveled: 0,
-      lastStepAt: now,
-      hitEnemies: new Set(),
-    });
-  }
-  playSfx("bow", 10);
+  spawnArrows(Array.from({ length: 8 }, (_, i) => i * Math.PI / 4), now);
 }
 
 // Advance each arrow along its angle. Dropped when it leaves the map, hits a wall
@@ -836,8 +832,7 @@ function enemyInAttackRange(enemy, px, py) {
 function stepEnemies(now) {
   state.enemies = state.enemies.filter((e) => !(e.dying && animDone(e.deathStart, now, "DIE")));
   if (state.player.dying) return; // freeze enemies once the player is dying
-  const goalX = state.player.moving ? state.player.toX : state.player.x;
-  const goalY = state.player.moving ? state.player.toY : state.player.y;
+  const { x: goalX, y: goalY } = playerTile();
   const field = goalFlowField(goalX, goalY);
   for (const enemy of state.enemies) {
     if (enemy.dying) continue;
@@ -905,10 +900,8 @@ function isEnemyAt(x, y) {
 // still stacked on an enemy, phasing persists until it reaches an enemy-free tile.
 function playerPhasing(now) {
   if (now < invulnUntil) return true;
-  const p = state.player;
-  const tx = p.moving ? p.toX : p.x;
-  const ty = p.moving ? p.toY : p.y;
-  return isEnemyAt(tx, ty);
+  const t = playerTile();
+  return isEnemyAt(t.x, t.y);
 }
 
 // Hit radius around an enemy's center. Smaller than a tile so the hitbox tracks
@@ -927,8 +920,7 @@ function enemyCenterPx(enemy, now) {
   return { x: (cx + 0.5) * TILE_SIZE, y: (cy + 0.5) * TILE_SIZE };
 }
 
-function resolveCollisions() {
-  const now = performance.now();
+function resolveCollisions(now) {
   const r2 = ENEMY_HIT_RADIUS * ENEMY_HIT_RADIUS;
   // Each arrow hits up to (1 + playerPierce) distinct enemies. hitEnemies is tracked
   // per arrow so it never re-hits one as it passes over it across frames. Enemy
@@ -1017,44 +1009,44 @@ function startPlayerDeath(now) {
 // ---------------------------------------------------------------------------
 
 // Draw `img` into the tile at (dx,dy), rotated clockwise by rotDeg (0/90/180/270).
-function drawTileRot(img, dx, dy, rotDeg) {
+function drawTileRot(g, img, dx, dy, rotDeg) {
   if (!img) return;
   const half = TILE_SIZE / 2;
-  ctx.save();
-  ctx.translate(dx + half, dy + half);
-  ctx.rotate(rotDeg * Math.PI / 180);
-  ctx.drawImage(img, -half, -half, TILE_SIZE, TILE_SIZE);
-  ctx.restore();
+  g.save();
+  g.translate(dx + half, dy + half);
+  g.rotate(rotDeg * Math.PI / 180);
+  g.drawImage(img, -half, -half, TILE_SIZE, TILE_SIZE);
+  g.restore();
 }
 
 // Side/corner sprites rotated so the dark edge always faces into the map.
-function drawMountainBorder(x, y) {
+function drawMountainBorder(g, x, y) {
   const left = x === 0, right = x === MAP_COLS - 1;
   const top = y === 0, bottom = y === MAP_ROWS - 1;
   if ((left || right) && (top || bottom)) {
     const rot = top && left ? 0 : top && right ? 90 : bottom && right ? 180 : 270;
-    drawTileRot(sprites.mountainCorner, x * TILE_SIZE, y * TILE_SIZE, rot);
+    drawTileRot(g, sprites.mountainCorner, x * TILE_SIZE, y * TILE_SIZE, rot);
   } else {
     const rot = left ? 0 : top ? 90 : right ? 180 : 270;
-    drawTileRot(sprites.mountainSide, x * TILE_SIZE, y * TILE_SIZE, rot);
+    drawTileRot(g, sprites.mountainSide, x * TILE_SIZE, y * TILE_SIZE, rot);
   }
 }
 
-function renderTiles() {
-  ctx.imageSmoothingEnabled = false; // pixel art: nearest-neighbor
+function renderTiles(g) {
+  g.imageSmoothingEnabled = false; // pixel art: nearest-neighbor
   for (let y = 0; y < MAP_ROWS; y++) {
     for (let x = 0; x < MAP_COLS; x++) {
       const tileId = state.tileMap[y][x];
       if (!sprites.grass) {
-        ctx.fillStyle = fallbackColor(tileId);
-        ctx.fillRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+        g.fillStyle = fallbackColor(tileId);
+        g.fillRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
         continue;
       }
       // Grass underlay everywhere, then the feature tile on top.
-      drawSprite(SRC.GRASS, x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+      drawSprite(g, SRC.GRASS, x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
       if (tileId === TILES.GRASS) continue;
-      if (tileId === TILES.MOUNTAIN) { drawMountainBorder(x, y); continue; }
-      drawSprite(tileSrc(tileId), x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+      if (tileId === TILES.MOUNTAIN) { drawMountainBorder(g, x, y); continue; }
+      drawSprite(g, tileSrc(tileId), x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
     }
   }
 }
@@ -1064,25 +1056,51 @@ function renderTiles() {
 const SPAWN_CASTLE_W = TILE_SIZE;
 const SPAWN_CASTLE_H = 54;
 
-function renderSpawnMarkers() {
+function renderSpawnMarkers(g) {
   const castle = sprites.spawnCastle;
   if (castle) {
-    const prevSmooth = ctx.imageSmoothingEnabled;
-    ctx.imageSmoothingEnabled = false;
+    const prevSmooth = g.imageSmoothingEnabled;
+    g.imageSmoothingEnabled = false;
     const left0 = (TILE_SIZE - SPAWN_CASTLE_W) / 2;
     for (const p of SPAWN_POINTS) {
       const left = p.x * TILE_SIZE + left0;
       const bottom = (p.y + 1) * TILE_SIZE;
-      ctx.drawImage(castle, 0, 0, castle.width, castle.height,
-                    left, bottom - SPAWN_CASTLE_H, SPAWN_CASTLE_W, SPAWN_CASTLE_H);
+      g.drawImage(castle, 0, 0, castle.width, castle.height,
+                  left, bottom - SPAWN_CASTLE_H, SPAWN_CASTLE_W, SPAWN_CASTLE_H);
     }
-    ctx.imageSmoothingEnabled = prevSmooth;
+    g.imageSmoothingEnabled = prevSmooth;
   } else {
-    ctx.fillStyle = "rgba(245, 185, 66, 0.18)";
+    g.fillStyle = "rgba(245, 185, 66, 0.18)";
     for (const p of SPAWN_POINTS) {
-      ctx.fillRect(p.x * TILE_SIZE, p.y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+      g.fillRect(p.x * TILE_SIZE, p.y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Level 1 background baking. The tile map and spawn castles are static for the
+// life of a map, so they are painted once to an offscreen canvas (mirroring
+// level 2's cave background) and blitted each frame instead of issuing hundreds
+// of per-tile draws. Rebaked when the tileMap reference changes (a new map) or
+// when the sprites finish loading after a bake that used the fallback colors.
+// ---------------------------------------------------------------------------
+let l1Bg = null;
+let l1BgMap = null;
+let l1BgSpritesReady = false;
+
+function level1Background() {
+  if (l1Bg === null || l1BgMap !== state.tileMap || l1BgSpritesReady !== spritesReady) {
+    const cv = document.createElement("canvas");
+    cv.width = canvas.width;
+    cv.height = canvas.height;
+    const g = cv.getContext("2d");
+    renderTiles(g);
+    renderSpawnMarkers(g);
+    l1Bg = cv;
+    l1BgMap = state.tileMap;
+    l1BgSpritesReady = spritesReady;
+  }
+  return l1Bg;
 }
 
 // 55/415 is the arrow sprite's native aspect ratio.
@@ -1093,8 +1111,7 @@ function renderProjectiles() {
   ctx.imageSmoothingEnabled = true; // smooth the vector arrow
   const arrowSheet = sprites.arrow;
   // Skip an arrow still on the player's own tile so it doesn't flash a stub.
-  const ptx = state.player.moving ? state.player.toX : state.player.x;
-  const pty = state.player.moving ? state.player.toY : state.player.y;
+  const { x: ptx, y: pty } = playerTile();
   for (const p of state.projectiles) {
     if (Math.floor(p.px / TILE_SIZE) === ptx && Math.floor(p.py / TILE_SIZE) === pty) continue;
     ctx.save();
@@ -1226,8 +1243,9 @@ function render(now) {
     const bg = l2Background();
     if (bg) { ctx.imageSmoothingEnabled = false; ctx.drawImage(bg, 0, 0); }
   } else {
-    renderTiles();
-    renderSpawnMarkers();
+    // Level 1's map is baked the same way (see level1Background) and blitted.
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(level1Background(), 0, 0);
   }
   renderEnemies(now);
   renderPlayer(now);
@@ -1378,7 +1396,7 @@ function loop(now) {
       releasePendingShot(now);
       maybeFireOmni(now);
       stepEnemies(now);
-      resolveCollisions();
+      resolveCollisions(now);
       render(now);
       updateHud(now, state);
       if (state.kills - killCardBaseline >= killsPerCard()) {
@@ -1600,6 +1618,7 @@ buildStatBoxes();
 showRangerHud();
 
 loadSprites().then(() => {
+  spritesReady = true; // triggers a level 1 rebake with the real sprites
   render(performance.now());
   startCharPreviewLoop();
 });

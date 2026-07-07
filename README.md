@@ -32,8 +32,8 @@ A top-down tile-based survival shooter. Move with WASD, aim with the mouse and l
 **Frontend** is a single-page HTML5 Canvas game in plain JavaScript, served as static files from the Spring Boot backend at `/`. `game.js` owns the game loop, input, the level system, and rendering, with the rest split into ES modules (`mapgen.js`, `level2.js`, `pathfinding.js`, `shuffle.js`, `audio.js`, `hud.js`, `buffs.js`, `net.js`).
 
 - Game loop driven by `requestAnimationFrame`.
-- Level 1's tile grid is stored as a 2D array, drawn each frame from 48px tile sprites (grass, path, water, tree), with the map border built from rotated mountain side and corner pieces. Its map generation lives in `mapgen.js`, a pure DOM-free module, and runs BFS reachability so every fort can reach the player. Level 2 reuses its wandering spawn-to-center route walker with the cave's own fort set.
-- Level 2 is generated in the browser the same way, by `level2.js`. It grows organic water and lava pools, dirt paths from each spawn to the center, and rock and mineral obstacles, then paints the whole cave once to an offscreen canvas that the loop blits each frame. Water gets a foam edge and lava a charred edge, computed at pixel resolution. A tile terrain grid drives collision and pathfinding, so the game code never branches on the level for movement or arrows.
+- Level 1's tile grid is stored as a 2D array, painted once per map from 48px tile sprites (grass, path, water, tree) to an offscreen canvas that the loop blits each frame, with the map border built from rotated mountain side and corner pieces. Its map generation lives in `mapgen.js`, a pure DOM-free module, and runs BFS reachability so every fort can reach the player. Level 2 reuses its wandering spawn-to-center route walker with the cave's own fort set.
+- Level 2 is generated in the browser the same way, by `level2.js`. It grows organic water and lava pools, dirt paths from the spawns toward the center, and rock and mineral obstacles, then paints the whole cave once to an offscreen canvas that the loop blits each frame. Every spawn is guaranteed a walkable route to the center even when it doesn't get a dirt path. Water gets a foam edge and lava a charred edge, computed at pixel resolution. A tile terrain grid drives collision and pathfinding, so the game code never branches on the level for movement or arrows.
 - Sprite-sheet animation system (idle/walk/run/attack/hurt/die) anchored per character so sprites stay put across poses. Rangers, knights, and trolls all share the same 6-row 10-frame layout.
 - Every enemy chases the player, so pathfinding is a single flow field (`pathfinding.js`). One weighted sweep (Dijkstra) from the player each time it changes tiles builds a least-cost field, and every enemy steps to the neighbor closest to the player. Movement is 8-directional and terrain has a cost, so enemies cut diagonals and prefer faster path tiles even when the route is a little longer, never cutting a corner past a wall. The same search serves every level, taking the cave's terrain rules as a blocked-tile test so trolls route around the pools and rocks.
 - Each level has its own randomized music playlist. Music plays through looping HTML audio elements and sound effects through the Web Audio API, each with its own volume control (`audio.js`). Volume and mute settings persist across sessions in `localStorage`.
@@ -84,7 +84,7 @@ recurve/
 │   ├── dto/               # ScoreSubmission (in), ScoreView (out)
 │   ├── model/Score.java
 │   ├── repository/ScoreRepository.java
-│   └── service/           # GameSessionService, SpawnModel, ProfanityFilter, SubmissionRateLimiter
+│   └── service/           # GameSessionService, SpawnModel, ProfanityFilter, ClientRateLimiter
 ├── src/main/resources/
 │   ├── application.yml
 │   ├── db/migration/      # Flyway migrations (prod/Postgres)
@@ -110,8 +110,9 @@ recurve/
     │   ├── HealthControllerTest.java
     │   ├── SpawnModelTest.java
     │   ├── ProfanityFilterTest.java
-    │   └── SubmissionRateLimiterTest.java
+    │   └── ClientRateLimiterTest.java
     └── js/
         ├── mapgen.test.js      # map-generation property tests
+        ├── level2.test.js      # cave-generation invariant tests
         └── pathfinding.test.js # flow-field tests
 ```

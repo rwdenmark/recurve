@@ -60,6 +60,8 @@
           </div>
 
           <div id="score-form" class="score-form hidden">
+            <!-- The id "callsign" is deliberate. A generic id like "name" trips
+                 Chrome's address-card autofill, which ignores autocomplete="off". -->
             <input id="callsign" class="callsign-input" type="text" maxlength="24" placeholder="Enter your name" autocomplete="off">
             <button id="submit-score-button" class="overlay-secondary">Submit score</button>
           </div>

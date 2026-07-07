@@ -1,6 +1,6 @@
 package com.recurve;
 
-import com.recurve.service.SubmissionRateLimiter;
+import com.recurve.service.ClientRateLimiter;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -10,10 +10,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * Direct coverage of the sliding window. Time is driven through the nowMillis
  * seam, same pattern as ProfanityFilterTest overriding queryRemote.
  */
-class SubmissionRateLimiterTest {
+class ClientRateLimiterTest {
 
     /** Limiter on a hand-cranked clock. */
-    private static class FixedClockLimiter extends SubmissionRateLimiter {
+    private static class FixedClockLimiter extends ClientRateLimiter {
         long now = 1_000;
 
         FixedClockLimiter(int maxPerWindow) {

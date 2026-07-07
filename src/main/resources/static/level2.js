@@ -4,8 +4,10 @@
 // water, black char on lava), so the whole map is generated and painted to an
 // offscreen canvas once when level 2 loads (hidden by the fade), then blitted each
 // frame. Collision and enemy pathfinding read the tile terrain grid, exactly like
-// level 1's tileMap. Pure of game state: game.js calls generateLevel2() then reads the
-// grid and background through the query functions below.
+// level 1's tileMap. Dirt paths are grown from the spawns toward the center, and every
+// spawn stays walkable even when it doesn't win a dirt path (see build). Pure of game
+// state: game.js calls generateLevel2() then reads the grid and background through the
+// query functions below.
 
 import {
   MAP_COLS as COLS, MAP_ROWS as ROWS, PLAYER_START_X as CX, PLAYER_START_Y as CY,
@@ -18,7 +20,7 @@ const ART = 16;                 // art-resolution pixels per tile for the froth/
 const AW = COLS * ART, AH = ROWS * ART;
 
 // Terrain codes stored in the grid.
-export const L2 = { FLOOR: 0, PATH: 1, WATER: 2, LAVA: 3, WALL: 4, ROCK: 5 };
+const L2 = { FLOOR: 0, PATH: 1, WATER: 2, LAVA: 3, WALL: 4, ROCK: 5 };
 
 // The six troll spawn points: the interior tile just in front of each border portal
 // (portals sit at cols 2,16,29 on the top and bottom rows).
@@ -52,6 +54,7 @@ export function l2BlocksProjectile(x, y) {
 }
 // Fraction of base speed on this tile, matching level 1's path-fast / ground-slow feel.
 export function l2SpeedMult(x, y) {
+  if (x < 0 || x >= COLS || y < 0 || y >= ROWS) return 1.0;
   const t = grid[y][x];
   if (t === L2.PATH) return 1.15;
   if (t === L2.FLOOR) return 0.85;
@@ -279,7 +282,7 @@ function drawNetwork(routes, reserved, center3) {
 // Map assembly
 // ---------------------------------------------------------------------------
 
-export function build() {
+function build() {
   grid = Array.from({ length: ROWS }, () => new Array(COLS).fill(L2.FLOOR));
   for (let x = 0; x < COLS; x++) { grid[0][x] = L2.WALL; grid[ROWS - 1][x] = L2.WALL; }
   for (let y = 0; y < ROWS; y++) { grid[y][0] = L2.WALL; grid[y][COLS - 1] = L2.WALL; }
@@ -307,7 +310,7 @@ export function build() {
   path = best;
   for (const p of path) reserved.add(p);
 
-  // Tuned so water averages ~40 tiles (mostly 30-50) and lava ~30 (mostly 25-35).
+  // Goal bands passed to placePools: 33-39 water tiles and 28-32 lava tiles.
   // Water first, then lava, which keeps a gap from the water.
   const water = placePools(33, 39, reserved, new Set(), [1.8, 2.3], [1.5, 1.9], 5);
   for (const p of water) reserved.add(p);

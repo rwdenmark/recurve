@@ -1,7 +1,7 @@
 package com.recurve.controller;
 
 import com.recurve.service.GameSessionService;
-import com.recurve.service.SubmissionRateLimiter;
+import com.recurve.service.ClientRateLimiter;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -24,7 +24,7 @@ public class GameSessionController {
     private static final int MAX_STARTS_PER_MINUTE = 20;
 
     private final GameSessionService sessions;
-    private final SubmissionRateLimiter rateLimiter = new SubmissionRateLimiter(MAX_STARTS_PER_MINUTE);
+    private final ClientRateLimiter rateLimiter = new ClientRateLimiter(MAX_STARTS_PER_MINUTE);
 
     public GameSessionController(GameSessionService sessions) {
         this.sessions = sessions;
