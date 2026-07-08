@@ -218,10 +218,13 @@ body {
 }
 
 /* Fixed design-size box holding the canvas + overlays. game.js (fitApp) scales it uniformly
-   to fit the stage, so the game and its menu stay perfectly aligned at any window size. */
+   to fit the stage, so the game and its menu stay perfectly aligned at any window size.
+   Hidden until the first fit runs. Before the module loads this box is 0x0, which would
+   anchor the overlay layer at the stage center and flash the menu half offscreen. */
 .play-area {
   position: relative;
   flex: 0 0 auto;                 /* game.js sizes this to the on-screen game size */
+  visibility: hidden;             /* fitApp reveals it once sized */
 }
 
 /* Overlay layer: the menus are built at the fixed 1536x768 design size and CSS-scaled by

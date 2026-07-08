@@ -393,6 +393,7 @@ function fitApp() {
   canvas.style.height = dispH + "px";
   if (canvas.width !== bw || canvas.height !== bh) { canvas.width = bw; canvas.height = bh; }
   renderScale = bw / WORLD_W;
+  playAreaEl.style.visibility = "visible"; // sized now, safe to show (CSS hides it pre-fit)
 }
 // Resizing the buffer clears it, and the loop only paints during live play, so a resize
 // must repaint whatever static frame is on screen. Re-rendering with the timestamp of
