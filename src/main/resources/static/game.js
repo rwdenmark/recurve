@@ -1381,7 +1381,11 @@ function stepEnemies(now) {
     if (enemy.dying) continue;
     const type = ALL_TYPES[enemy.type];
 
-    if (now < enemy.hurtUntil) { enemy.moving = false; continue; }
+    if (now < enemy.hurtUntil) {
+      // Hold the in-progress move frozen at the hit point for the flinch, then let it resume.
+      if (enemy.moving) enemy.moveStartAt = now - enemy.hurtMoveT * enemy.moveDuration;
+      continue;
+    }
 
     // Gray ranger's invisibility: every enemy stops hunting and wanders at 25% speed.
     if (invisible) { wanderStep(enemy, now); continue; }
@@ -1538,8 +1542,15 @@ function damageEnemy(enemy, now, dmg = playerDamage) {
       else if (selectedRanger === 2 && !stormKillInProgress && stormChargeEnd !== 0) stormChargeEnd = Math.max(now, stormChargeEnd - ULT_KILL_REDUCTION_MS);
     }
   } else {
+    // Non-fatal hit: pause the enemy in place for the flinch. Record how far into its current
+    // move it had travelled so stepEnemies can hold the move frozen there for the flinch and
+    // then let it finish, rather than snapping back to the tile it left or jumping to the next.
+    if (now >= enemy.hurtUntil) { // first hit of a fresh flinch, not a re-hit mid-flinch
+      enemy.hurtMoveT = enemy.moving
+        ? Math.max(0, Math.min(1, (now - enemy.moveStartAt) / enemy.moveDuration))
+        : 0;
+    }
     enemy.hurtUntil = now + HURT_HOLD_MS;
-    enemy.moving = false;
     enemy.attacking = false;
   }
 }
