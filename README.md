@@ -1,6 +1,6 @@
 # Recurve
 
-A top-down tile-based survival shooter. Move with WASD, aim with the mouse and left-click to shoot, and survive waves of enemies that get faster and tougher. Clear the grass field and the run drops into a cave against trolls, then loops back and forth forever, each pass tougher than the last. A college-project recreation rebuilt as a browser game on an HTML5 Canvas with a Spring Boot backend for leaderboards.
+A top-down tile-based survival shooter. Move with WASD, aim with the mouse and left-click to shoot, and survive waves of enemies that get faster and tougher. Clear the grass field, drop into a cave against trolls, then a flooded sewer against necromancers, then loop forever, each pass tougher than the last. A college-project recreation rebuilt as a browser game on an HTML5 Canvas with a Spring Boot backend for leaderboards.
 
 ## Gameplay
 
@@ -21,23 +21,29 @@ A top-down tile-based survival shooter. Move with WASD, aim with the mouse and l
 - The cave adds water pools, lava pools, and rock and mineral obstacles. Water and lava stop movement and arrows fly over them. Rocks and minerals block movement and arrows both.
 - Kills and every buff carry over between levels.
 
+### Level 3, the sewer
+
+- A flooded brick sewer generated in the browser by `level3.js`. WATER is the default fill and dry FLOOR is carved into it. A spaced-corridor backbone (Dijkstra, so corridors stay apart) with a loop circuit on each half links the 3x3 dry center, and each spawn, four wall portals plus four random floor grates, hangs off it as a dead-end leaf. Cleanup passes then fill any water the tileset can't paint cleanly (thin water, or a corner where two water edges meet with no matching piece) and drop any pool too small to hold a lit surface, so the autotiler always has room for clean water-to-wall and water-to-floor edges. A final pass breaks up wide open floor by punching water rooms into it, keeping every spawn connected to the center, which gives the level tighter corridors and more water. Floor grates render with a border variant matching whichever sides face water. Water blocks movement and arrows fly over it, like the cave.
+- The enemies are three necromancers, ranged summoners rather than melee. They spawn from the wall portals and floor grates, path to within 4 tiles of the player, and cast a slow, non-homing fireball every 5 seconds (aimed where you were, so it is dodgeable). They move at half the matching knight/troll tier's speed. necro_one spawns from the start, necro_two after the third card taken in level 3, necro_three after the sixth.
+- Each necromancer summons a matching skeleton minion (one at a time, on a 10-second cooldown from the first summon) when within 12 tiles. Skeletons are melee chasers that move at the knight/troll tier speed, and the third skeleton floats over water. Only necromancers count toward score and upgrade cards; skeletons are pure threats.
+
 ### The endless loop
 
-- The levels loop forever, level 1 to level 2, back to level 1, and on until the ranger dies. Every ten cards moves to the next level in the loop.
-- Each time the loop wraps back to level 1 a new, harder cycle begins. Enemies gain a flat 10 health and 0.05 speed per cycle, so the second pass through the knights starts them at 12, 14, and 16 health and the trolls at 18, 20, and 22, and it keeps climbing from there. Cards also come slower once the loop wraps, every 20 kills instead of every 10.
+- The levels loop forever, level 1 to level 2 to level 3, back to level 1, and on until the ranger dies. Every ten cards moves to the next level in the loop.
+- Each time the loop wraps back to level 1 a new, harder cycle begins. Enemies gain a flat 10 health and 0.05 speed per cycle, so the second pass through the knights starts them at 12, 14, and 16 health, the trolls at 18, 20, and 22, and the necromancers (and their minions) at 24, 26, and 28, and it keeps climbing from there. Cards also come slower once the loop wraps, every 20 kills instead of every 10.
 - The swarm scales with progress, not the clock. The target on-screen population is 6 plus 3 for every upgrade card taken across the whole run, and the top-up interval shortens from 600ms toward 175ms as cards pile up, so the board fills faster and faster. A per-cycle safety cap (100 plus 40 per cycle) holds the frame rate, but the intent is that the run eventually becomes unwinnable rather than dragging on forever.
 
 ## Architecture
 
-**Frontend** is a single-page HTML5 Canvas game in plain JavaScript, served as static files from the Spring Boot backend at `/`. `game.js` owns the game loop, input, the level system, and rendering, with the rest split into ES modules (`mapgen.js`, `level2.js`, `pathfinding.js`, `shuffle.js`, `audio.js`, `hud.js`, `buffs.js`, `net.js`).
+**Frontend** is a single-page HTML5 Canvas game in plain JavaScript, served as static files from the Spring Boot backend at `/`. `game.js` owns the game loop, input, the level system, and rendering, with the rest split into ES modules (`mapgen.js`, `level2.js`, `level3.js`, `pathfinding.js`, `shuffle.js`, `audio.js`, `hud.js`, `buffs.js`, `net.js`).
 
 - Game loop driven by `requestAnimationFrame`.
 - Level 1's tile grid is stored as a 2D array, painted once per map from 48px tile sprites (grass, path, water, tree) to an offscreen canvas that the loop blits each frame, with the map border built from rotated mountain side and corner pieces. Its map generation lives in `mapgen.js`, a pure DOM-free module, and runs BFS reachability so every fort can reach the player. Level 2 reuses its wandering spawn-to-center route walker with the cave's own fort set.
 - Level 2 is generated in the browser the same way, by `level2.js`. It grows organic water and lava pools, dirt paths from the spawns toward the center, and rock and mineral obstacles, then paints the whole cave once to an offscreen canvas that the loop blits each frame. Every spawn is guaranteed a walkable route to the center even when it doesn't get a dirt path. Water gets a foam edge and lava a charred edge, computed at pixel resolution. A tile terrain grid drives collision and pathfinding, so the game code never branches on the level for movement or arrows.
-- Sprite-sheet animation system (idle/walk/run/attack/hurt/die) anchored per character so sprites stay put across poses. Rangers, knights, and trolls all share the same 6-row 10-frame layout.
-- Every enemy chases the player, so pathfinding is a single flow field (`pathfinding.js`). One weighted sweep (Dijkstra) from the player each time it changes tiles builds a least-cost field, and every enemy steps to the neighbor closest to the player. Movement is 8-directional and terrain has a cost, so enemies cut diagonals and prefer faster path tiles even when the route is a little longer, never cutting a corner past a wall. The same search serves every level, taking the cave's terrain rules as a blocked-tile test so trolls route around the pools and rocks.
+- Sprite-sheet animation system (idle/walk/run/attack/hurt/die) anchored per character so sprites stay put across poses. Rangers, knights, trolls, and skeletons share the same 6-row 10-frame layout, and necromancers add a seventh summon row.
+- Melee enemies chase the player through a flow field (`pathfinding.js`). One weighted sweep (Dijkstra) from the player each time it changes tiles builds a least-cost field, and every chaser steps to the neighbor closest to the player. Movement is 8-directional and terrain has a cost, so enemies cut diagonals and prefer faster path tiles even when the route is a little longer, never cutting a corner past a wall. The same search serves every level, taking each level's terrain rules as a blocked-tile test so enemies route around pools and rocks. Necromancers are the exception, pathing only until they are within firing range and then holding to cast, and floating skeletons run a second flow field that treats water as walkable.
 - Each level has its own randomized music playlist. Music plays through looping HTML audio elements and sound effects through the Web Audio API, each with its own volume control (`audio.js`). Volume and mute settings persist across sessions in `localStorage`.
-- Art and audio are split by level under `static/level_one/` and `static/level_two/`.
+- Art and audio are split by level under `static/level_one/`, `static/level_two/`, and `static/level_three/`.
 
 **Backend** is a Spring Boot REST API for high scores.
 
@@ -67,7 +73,7 @@ The H2 console is at `http://localhost:8080/h2-console` (jdbc url `jdbc:h2:mem:r
 node --test src/test/js    # frontend tests (map generation + pathfinding, Node 18+)
 ```
 
-The frontend tests generate hundreds of level 1 maps and assert the generator's invariants. Every fort is reachable from the player, paths stay one tile wide, water is orthogonally connected, and obstacle counts stay within their caps.
+The frontend tests generate hundreds of maps per generator and assert its invariants. For level 1, every fort is reachable from the player, paths stay one tile wide, water is orthogonally connected, and obstacle counts stay within their caps. The level 2 and level 3 suites check their own, and the sewer asserts a solid wall border, a dry 3x3 center, every spawn reaching the center over floor, and every water cell sitting in a 2x2 block.
 
 ## Project structure
 
@@ -93,6 +99,7 @@ recurve/
 │       ├── game.js           # game loop, input, level system, rendering
 │       ├── mapgen.js         # level 1 tile-world model + map generation
 │       ├── level2.js         # level 2 cave generation + froth/char rendering
+│       ├── level3.js         # level 3 sewer generation + autotiled rendering
 │       ├── pathfinding.js    # pure weighted flow-field pathfinding
 │       ├── shuffle.js        # shared Fisher-Yates shuffle
 │       ├── audio.js          # per-level music playlists + Web Audio SFX
@@ -101,7 +108,8 @@ recurve/
 │       ├── net.js            # leaderboard + score submission
 │       ├── styles.css
 │       ├── level_one/        # level 1 sprites, tiles, and audio
-│       └── level_two/        # cave sprites, troll sheets, and audio
+│       ├── level_two/        # cave sprites, troll sheets, and audio
+│       └── level_three/      # sewer tiles, necromancer + skeleton sheets, and audio
 └── src/test/
     ├── java/com/recurve/
     │   ├── ScoreControllerTest.java
@@ -114,5 +122,6 @@ recurve/
     └── js/
         ├── mapgen.test.js      # map-generation property tests
         ├── level2.test.js      # cave-generation invariant tests
+        ├── level3.test.js      # sewer-generation invariant tests
         └── pathfinding.test.js # flow-field tests
 ```

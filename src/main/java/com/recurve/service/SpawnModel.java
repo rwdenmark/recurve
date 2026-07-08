@@ -21,10 +21,10 @@ public final class SpawnModel {
     private static final int MAX_SPAWN_POINTS = 8;      // level 1's fort count, the larger level
 
     // Card pacing: 10 kills per card through the first cycle (CARDS_PER_LEVEL x
-    // LEVEL_COUNT cards), 20 per card once the loop wraps. The two kills-per-card
+    // LEVEL_COUNT = 10 x 3 = 30 cards), 20 per card once the loop wraps. The two kills-per-card
     // constants mirror KILLS_PER_CARD_FIRST_CYCLE in buffs.js and
     // KILLS_PER_CARD_LATER in game.js.
-    private static final int FIRST_CYCLE_CARDS = 20;
+    private static final int FIRST_CYCLE_CARDS = 30;
     private static final int KILLS_PER_CARD_FIRST_CYCLE = 10;
     private static final int KILLS_PER_CARD_LATER = 20;
 

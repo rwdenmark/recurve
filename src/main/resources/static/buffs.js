@@ -133,3 +133,21 @@ export function resetRunStats(ranger) {
   buffsAwarded = 0;
   for (const c of BUFF_CARDS) c.taken = 0;
 }
+
+// God mode (testing): apply every upgrade card at its cap, so the archer starts fully
+// kitted out. buffsAwarded is bumped so all enemy tiers unlock immediately. Called from
+// start() when GOD_MODE is on, after resetRunStats.
+export function applyMaxBuffs(state) {
+  const STACK = STACK_CAP; // 10
+  playerDamage += DEFAULT_DAMAGE * STACK;
+  playerSpeedMult += 0.25 * STACK;
+  fireRateMult += 0.5 * STACK;
+  playerArrowRange += STACK;
+  playerPierce = 3;      // Arrow Piercing cap
+  playerMultiShot = true;
+  omniLevel = 3;         // Omni-Shot cap
+  buffsAwarded = 6;      // unlock every enemy tier from the start
+  state.maxLives += STACK;
+  state.lives = state.maxLives;
+  for (const c of BUFF_CARDS) c.taken = c.cap || STACK; // show as maxed, drop them from the pool
+}

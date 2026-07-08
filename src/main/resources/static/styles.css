@@ -13,39 +13,77 @@
 html, body {
   margin: 0;
   padding: 0;
+  height: 100%;
   background: var(--bg);
   color: var(--text);
   font-family: ui-monospace, "SFMono-Regular", Menlo, Monaco, monospace;
   font-size: 14px;
 }
 
+/* Pin the app to the viewport so nothing scrolls; the game scales to absorb the slack. */
+body {
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
 /* Full-width bar. The inner block matches the game canvas width (1536px) and is
    centered, so LIFE lines up with the game's left border and the volume controls
    with its right border, while Kills/Time stay centered. */
 .hud {
-  padding: 14px 0;
+  padding: 6px 0;                 /* compact bars */
   background: var(--panel);
-  border-bottom: 1px solid #25262c;
+  flex: 0 0 auto;                 /* bars keep their height; the stage absorbs slack */
 }
+.hud-top { border-bottom: 1px solid #5a5e67; }     /* light-gray divider under the top bar */
+.hud-bottom { border-top: 1px solid #5a5e67; }      /* light-gray divider above the bottom bar */
 
 .hud-inner {
   width: 1536px;                 /* matches the canvas display width */
   max-width: calc(100% - 32px);
   margin: 0 auto;
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 18px;
+  min-height: 26px;              /* both bars share this row height so top and bottom match */
 }
 
-.hud-life { justify-self: start; }
-.hud-stats { justify-self: center; }
 .hud-sound-group {
-  justify-self: end;
   display: inline-flex;
   align-items: center;
   gap: 16px;
 }
+
+/* Control hints (bottom-left), key-cap style matching the Recurve accent. */
+.hud-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.key-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+.key-cap {
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  border-radius: 3px;
+  padding: 3px 6px;
+  font-size: 12px;
+  line-height: 1;
+}
+.key-sep { color: var(--muted); }
+.kh-word { margin-left: 4px; }
 
 .hud-group {
   display: inline-flex;
@@ -56,7 +94,7 @@ html, body {
 .hearts {
   display: inline-flex;
   gap: 6px;
-  font-size: 30px;
+  font-size: 24px;
   line-height: 1;
 }
 
@@ -94,29 +132,57 @@ html, body {
 }
 
 .hud-value {
-  font-size: 28px;
+  font-size: 22px;
   color: var(--accent);
   font-variant-numeric: tabular-nums;
 }
 
 .hud-divider {
   width: 1px;
-  height: 28px;
+  height: 22px;
   background: #25262c;
   margin: 0 6px;
 }
 
 .stage {
+  flex: 1 1 auto;                 /* fills the space between the two bars */
+  min-height: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 32px 16px;
+  overflow: hidden;
+  padding: clamp(6px, 1.6vh, 16px) clamp(6px, 1.6vw, 16px);
   position: relative;
 }
 
+/* Fixed design-size box holding the canvas + overlays. game.js (fitApp) scales it uniformly
+   to fit the stage, so the game and its menu stay perfectly aligned at any window size. */
+.play-area {
+  position: relative;
+  flex: 0 0 auto;                 /* game.js sizes this to the on-screen game size */
+}
+
+/* Overlay layer: the menus are built at the fixed 1536x768 design size and CSS-scaled by
+   game.js to sit exactly over the canvas (which renders at native device resolution).
+   pointer-events:none lets clicks reach the canvas; the visible panels re-enable them. */
+.overlay-scale {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1536px;                  /* MAP_COLS * 48 */
+  height: 768px;                  /* MAP_ROWS * 48 */
+  transform-origin: top left;
+  pointer-events: none;
+}
+
 #game {
-  image-rendering: pixelated;
-  image-rendering: crisp-edges;
+  display: block;
+  width: 100%;
+  height: 100%;
+  /* The buffer is rendered at the display's true pixel size, so there is no non-integer
+     upscale of the finished frame (the old cause of choppy motion). auto handles only the
+     minor HiDPI downscale when devicePixelRatio > 1. */
+  image-rendering: auto;
   background: #000;
   border: 1px solid #25262c;
   outline: none;
@@ -124,7 +190,7 @@ html, body {
 
 .overlay {
   position: absolute;
-  inset: 32px 16px;
+  inset: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -134,6 +200,7 @@ html, body {
   border: 1px solid #25262c;
   padding: 24px;
   overflow-y: auto;
+  pointer-events: auto;           /* capture clicks when shown (layer above is none) */
 }
 
 .overlay.hidden {
@@ -260,12 +327,13 @@ html, body {
 /* Upgrade-card overlay shown at each card threshold. */
 .buff-overlay {
   position: absolute;
-  inset: 32px 16px;
+  inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
   background: rgba(12, 13, 16, 0.92);
   border: 1px solid #25262c;
+  pointer-events: auto;
 }
 .buff-overlay.hidden { display: none; }
 

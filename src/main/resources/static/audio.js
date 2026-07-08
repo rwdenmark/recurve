@@ -58,7 +58,8 @@ function makeTrackSet(paths) {
 }
 const gameSetL1 = makeTrackSet(["level_one/audio/game1.mp3", "level_one/audio/game2.mp3", "level_one/audio/game3.mp3"]);
 const gameSetL2 = makeTrackSet(["level_two/audio/game1.mp3", "level_two/audio/game2.mp3", "level_two/audio/game3.mp3"]);
-const ALL_SETS = [gameSetL1, gameSetL2];
+const gameSetL3 = makeTrackSet(["level_three/audio/game1.mp3", "level_three/audio/game2.mp3", "level_three/audio/game3.mp3"]);
+const ALL_SETS = [gameSetL1, gameSetL2, gameSetL3];
 let activeSet = gameSetL1;
 
 function applyVolume() {
@@ -78,7 +79,7 @@ export function playGameMusic(level = 1) {
   musicMode = "game";
   menuMusic.pause();
   for (const s of ALL_SETS) for (const a of s.tracks) a.pause();
-  activeSet = level === 2 ? gameSetL2 : gameSetL1;
+  activeSet = level === 3 ? gameSetL3 : level === 2 ? gameSetL2 : gameSetL1;
   activeSet.idx = Math.floor(Math.random() * activeSet.tracks.length);
   const a = activeSet.tracks[activeSet.idx];
   a.currentTime = 0;
@@ -128,6 +129,14 @@ musicSlider.value = String(Math.round(musicVolume * 100));
 sfxSlider.value = String(Math.round(sfxVolume * 100));
 applyVolume();
 updateMuteIcon();
+
+// Keep the volume controls from stealing keyboard focus: leave them out of the tab order and
+// blur them after each interaction so WASD/space keep reaching the game instead of the slider.
+for (const el of [musicSlider, sfxSlider, musicMuteBtn, sfxMuteBtn]) {
+  el.tabIndex = -1;
+  el.addEventListener("pointerup", () => el.blur());
+  el.addEventListener("click", () => el.blur());
+}
 
 // Sound effects via Web Audio, not HTMLAudio. A decoded buffer fires with far
 // less latency, so the bow twang stays in sync with the arrow.

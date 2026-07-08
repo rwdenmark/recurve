@@ -19,7 +19,7 @@ import {
   DEFAULT_HEALTH, DEFAULT_DAMAGE, DEFAULT_ATTACK_INTERVAL_MS, DEFAULT_MOVE_DURATION_MS,
   playerDamage, playerSpeedMult, fireRateMult, playerMultiShot, omniLevel,
   playerPierce, playerArrowRange, buffsAwarded,
-  KILLS_PER_CARD_FIRST_CYCLE, startBuffSelection, resetRunStats,
+  KILLS_PER_CARD_FIRST_CYCLE, startBuffSelection, resetRunStats, applyMaxBuffs,
 } from "./buffs.js";
 import {
   refreshLeaderboard, startGameSession, setLastRunDuration, resetScoreForm, initScoreForm,
@@ -27,6 +27,9 @@ import {
 import {
   generateLevel2, l2Solid, l2BlocksProjectile, l2SpeedMult, l2Background, l2Grid, L2_SPAWNS,
 } from "./level2.js";
+import {
+  generateLevel3, l3Solid, l3BlocksProjectile, l3SpeedMult, l3Background, l3Grid, l3Spawns,
+} from "./level3.js";
 
 const TILE_SIZE = 48;
 
@@ -58,6 +61,50 @@ const SPRITE_PATHS = {
   cavePath:  "level_two/path.png",       // dark-packed dirt path tile
   caveObjects: "level_two/objects.png",  // 5x3 grid of 48px rock and mineral sprites
   caveFrame: "level_two/frame.png",      // baked border: edges + corners + spawn portals
+  // --- Level 3 assets (level_three/) ---
+  // The sewer tileset is composited by level3.js (walls, water, corners, spawns, effects).
+  l3Wall: "level_three/Wall.png",
+  l3Floor: "level_three/Floor.png",
+  l3Water: "level_three/water.png",
+  l3WaterWall: "level_three/water_wall.png",
+  l3FloorNextWater: "level_three/Floor_Next_To_Water.png",
+  l3FloorNextWaterCorner: "level_three/floor_next_to_water_corner.png",
+  l3FloorNextWaterBetween: "level_three/floor_next_to_water_between.png",
+  l3WaterWallSewer: "level_three/water_wall_sewer.png",
+  l3WaterWallGrate: "level_three/water_wall_grate.png",
+  l3WallCorner: "level_three/wall_corner.png",
+  l3WallWaterCorner: "level_three/wall_water_corner.png",
+  l3WaterFloorCorner: "level_three/water_floor_corner.png",
+  l3Spawn1: "level_three/enemy_spawn_1.png",   // wall portal
+  l3Spawn2: "level_three/enemy_spawn_2.png",   // floor grate (base; variants below add a
+  // water-wall border on each side that faces water, keyed by which neighbours are water)
+  l3Spawn2T:    "level_three/enemy_spawn_2_top.png",
+  l3Spawn2B:    "level_three/enemy_spawn_2_bottom.png",
+  l3Spawn2L:    "level_three/enemy_spawn_2_left.png",
+  l3Spawn2R:    "level_three/enemy_spawn_2_right.png",
+  l3Spawn2TB:   "level_three/enemy_spawn_2_top_bottom.png",
+  l3Spawn2LR:   "level_three/enemy_spawn_2_left_right.png",
+  l3Spawn2TL:   "level_three/enemy_spawn_2_top_left.png",
+  l3Spawn2TR:   "level_three/enemy_spawn_2_top_right.png",
+  l3Spawn2BL:   "level_three/enemy_spawn_2_bottom_left.png",
+  l3Spawn2BR:   "level_three/enemy_spawn_2_bottom_right.png",
+  l3Spawn2TBL:  "level_three/enemy_spawn_2_top_bottom_left.png",
+  l3Spawn2TBR:  "level_three/enemy_spawn_2_top_bottom_right.png",
+  l3Spawn2TLR:  "level_three/enemy_spawn_2_left_right_top.png",
+  l3Spawn2BLR:  "level_three/enemy_spawn_2_left_right_bottom.png",
+  l3Spawn2TBLR: "level_three/enemy_spawn_2_left_right_top_bottom.png",
+  l3Effects: "level_three/water_effects.png",  // water-surface decals
+  // Level 3 enemies: necromancers (7-row sheet: idle/walk/run/attack/hurt/die/summon) and
+  // their skeleton minions (standard 6-row), packed from the CraftPix necromancer set.
+  necro1: "level_three/necro1_anim.png",
+  necro2: "level_three/necro2_anim.png",
+  necro3: "level_three/necro3_anim.png",
+  skel1: "level_three/skel1_anim.png",
+  skel2: "level_three/skel2_anim.png",
+  skel3: "level_three/skel3_anim.png",
+  necro1Fire: "level_three/necro1_fireball.png",
+  necro2Fire: "level_three/necro2_fireball.png",
+  necro3Fire: "level_three/necro3_fireball.png",
 };
 
 const SRC = {
@@ -71,7 +118,9 @@ const SRC = {
 // Character animations
 // ---------------------------------------------------------------------------
 // (ax, ay) is the sprite's feet-center within a cell, used to anchor it to its tile.
-const ANIM_ROW = { IDLE: 0, WALK: 1, RUN: 2, ATTACK: 3, HURT: 4, DIE: 5 };
+// SUMMON (row 6) is only present on the 7-row necromancer sheets, other characters never
+// reference it, so it is harmless on their 6-row sheets.
+const ANIM_ROW = { IDLE: 0, WALK: 1, RUN: 2, ATTACK: 3, HURT: 4, DIE: 5, SUMMON: 6 };
 const ANIM_FRAMES = 10;
 const ARCHER_CELL = { sheet: "archer", w: 277, h: 240, ax: 88.1, ay: 216.1, scale: 0.27 };
 // Player skins (cosmetic). All three share ARCHER_CELL's geometry.
@@ -93,7 +142,15 @@ const KNIGHT3_CELL = { sheet: "knight3", w: 350, h: 240, ax: 147.4, ay: 235.5, s
 const TROLL_CELL  = { sheet: "troll",  w: 307, h: 240, ax: 120.9, ay: 235.0, scale: 0.2958 };
 const TROLL2_CELL = { sheet: "troll2", w: 305, h: 240, ax: 120.0, ay: 232.0, scale: 0.2900 };
 const TROLL3_CELL = { sheet: "troll3", w: 301, h: 240, ax: 122.5, ay: 236.0, scale: 0.2721 };
-const ANIM_FRAME_MS = { IDLE: 130, WALK: 80, RUN: 60, ATTACK: 55, HURT: 70, DIE: 90 };
+// Level 3 necromancer + skeleton cells (auto-packed, ax = idle horizontal center, ay = feet
+// baseline, scale tuned so the idle body renders ~52px).
+const NECRO_CELL  = { sheet: "necro1", w: 397, h: 240, ax: 151.6, ay: 225.2, scale: 0.2758 };
+const NECRO2_CELL = { sheet: "necro2", w: 401, h: 240, ax: 136.7, ay: 226.8, scale: 0.2759 };
+const NECRO3_CELL = { sheet: "necro3", w: 428, h: 240, ax: 127.6, ay: 223.1, scale: 0.2521 };
+const SKEL_CELL   = { sheet: "skel1",  w: 256, h: 240, ax: 120.7, ay: 223.5, scale: 0.2516 };
+const SKEL2_CELL  = { sheet: "skel2",  w: 270, h: 240, ax: 134.0, ay: 227.9, scale: 0.2439 };
+const SKEL3_CELL  = { sheet: "skel3",  w: 247, h: 240, ax: 126.5, ay: 240.0, scale: 0.2398 };
+const ANIM_FRAME_MS = { IDLE: 130, WALK: 80, RUN: 60, ATTACK: 55, HURT: 70, DIE: 90, SUMMON: 90 };
 const ATTACK_HOLD_MS = ANIM_FRAMES * ANIM_FRAME_MS.ATTACK;
 // The arrow leaves the bow partway through the swing (draw first, then release).
 const ARROW_RELEASE_MS = Math.round(ATTACK_HOLD_MS * 0.6);
@@ -139,6 +196,18 @@ const SPAWN_TARGET_PER_CARD = 3;    // target grows this much per card, uncapped
 
 const ARROW_SPEED = TILE_SIZE / 50; // travel speed in px/ms (one tile per 50ms)
 
+// --- Level 3 necromancer AI tuning ---
+const NECRO_SUMMON_RANGE = 12;            // tiles: a necromancer summons within this range
+const NECRO_ATTACK_RANGE = 4;             // tiles: it paths to here, then casts
+const NECRO_ATTACK_COOLDOWN_MS = 5000;
+const NECRO_SUMMON_COOLDOWN_MS = 10000;   // measured from the FIRST summon, not minion death
+const NECRO_ATTACK_HOLD_MS = ANIM_FRAMES * ANIM_FRAME_MS.ATTACK;
+const NECRO_SUMMON_HOLD_MS = ANIM_FRAMES * ANIM_FRAME_MS.SUMMON;
+const NECRO_PROJECTILE_RELEASE_MS = Math.round(NECRO_ATTACK_HOLD_MS * 0.6);
+const NECRO_PROJECTILE_SPEED = (TILE_SIZE / DEFAULT_MOVE_DURATION_MS) * 0.75; // 75% of player move speed
+const NECRO_PROJECTILE_RANGE = 9;         // tiles of travel before the fireball fizzles
+const SUMMON_FADE_MS = 500;               // a summoned skeleton fades in over this
+
 const PLAYER_MOVE_DURATION_MS = DEFAULT_MOVE_DURATION_MS;
 const PATH_SPEED_MULT  = 1.15;  // path tiles run faster
 const GRASS_SPEED_MULT = 0.85;  // grass slower
@@ -183,14 +252,40 @@ const TROLL_TYPES = {
   troll_two:   { cell: TROLL2_CELL, speedScale: 0.40, attackWindupMs: 1000, damage: 1, hpScale: 5, unlockCards: 3 },
   troll_three: { cell: TROLL3_CELL, speedScale: 0.60, attackWindupMs: 1000, damage: 1, hpScale: 6, unlockCards: 6 },
 };
-// Every enemy across both levels, keyed by type, so lookups (HP, cell, step timing)
+// Level 3 necromancers. Ranged summoners, not melee: they path to ~4 tiles from the player
+// and fire slow, non-homing fireballs, and they summon a matching skeleton minion. hpScale
+// continues the per-level pattern (knights 1-3, trolls 4-6, necromancers 7-9). Each
+// necromancer's minion shares its health (skeleton_* hpScale matches). kind drives the AI
+// branch, skeleton = the summoned minion type (skeleton_three floats over water).
+const NECRO_TYPES = {
+  necro_one:   { cell: NECRO_CELL,  kind: "necro", skeleton: "skeleton_one",   projectile: "necro1Fire", speedScale: 0.125, damage: 1, hpScale: 7, unlockCards: 0 },
+  necro_two:   { cell: NECRO2_CELL, kind: "necro", skeleton: "skeleton_two",   projectile: "necro2Fire", speedScale: 0.20, damage: 1, hpScale: 8, unlockCards: 3 },
+  necro_three: { cell: NECRO3_CELL, kind: "necro", skeleton: "skeleton_three", projectile: "necro3Fire", speedScale: 0.30, damage: 1, hpScale: 9, unlockCards: 6 },
+};
+// Skeleton minions: melee chasers like knights/trolls (summoned, never spawned from forts).
+// hpScale matches the summoning necromancer. skeleton_three floats over water (floats: true).
+const SKELETON_TYPES = {
+  skeleton_one:   { cell: SKEL_CELL,  kind: "skeleton", speedScale: 0.25, attackWindupMs: 1000, damage: 1, hpScale: 7, unlockCards: 0, floats: false },
+  skeleton_two:   { cell: SKEL2_CELL, kind: "skeleton", speedScale: 0.40, attackWindupMs: 1000, damage: 1, hpScale: 8, unlockCards: 0, floats: false },
+  skeleton_three: { cell: SKEL3_CELL, kind: "skeleton", speedScale: 0.60, attackWindupMs: 1000, damage: 1, hpScale: 9, unlockCards: 0, floats: true },
+};
+// Every enemy across all levels, keyed by type, so lookups (HP, cell, step timing)
 // don't care which level spawned it.
-const ALL_TYPES = { ...KNIGHT_TYPES, ...TROLL_TYPES };
+const ALL_TYPES = { ...KNIGHT_TYPES, ...TROLL_TYPES, ...NECRO_TYPES, ...SKELETON_TYPES };
 // Each level uses its own enemy types and spawn points. Add a level's entry here (and a
-// levelSpawns branch) when you add one.
-const LEVEL_TYPES = { 1: ["knight_one", "knight_two", "knight_three"], 2: ["troll_one", "troll_two", "troll_three"] };
+// levelSpawns branch) when you add one. Only spawn-from-fort types are listed, skeletons
+// are summoned, not listed here.
+const LEVEL_TYPES = {
+  1: ["knight_one", "knight_two", "knight_three"],
+  2: ["troll_one", "troll_two", "troll_three"],
+  3: ["necro_one", "necro_two", "necro_three"],
+};
 function levelTypes() { return LEVEL_TYPES[level] || LEVEL_TYPES[1]; }
-function levelSpawns() { return level === 2 ? L2_SPAWNS.map(([x, y]) => ({ x, y })) : SPAWN_POINTS; }
+function levelSpawns() {
+  if (level === 3) return l3Spawns();               // sewer: wall portals + floor grates (per run)
+  if (level === 2) return L2_SPAWNS.map(([x, y]) => ({ x, y }));
+  return SPAWN_POINTS;
+}
 // Upgrade cards taken within the current level. Enemy-type unlocks are per-level (they
 // subtract the cards taken in earlier levels), while the buff stats carry over.
 function levelCards() { return Math.max(0, buffsAwarded - levelCardBaseline); }
@@ -238,12 +333,45 @@ function rangerStats(i) {
 
 const canvas = document.getElementById("game");
 // Size the canvas before getContext, since resizing resets context state.
-canvas.width = MAP_COLS * TILE_SIZE;
-canvas.height = MAP_ROWS * TILE_SIZE;
-canvas.style.width = `${canvas.width}px`;
-canvas.style.height = `${canvas.height}px`;
+const WORLD_W = MAP_COLS * TILE_SIZE;   // fixed world the game renders in (1536 x 768)
+const WORLD_H = MAP_ROWS * TILE_SIZE;
+canvas.width = WORLD_W;
+canvas.height = WORLD_H;
 const ctx = canvas.getContext("2d");
 ctx.imageSmoothingEnabled = false;
+
+// Fit the game to the viewport. The play area is sized to on-screen pixels and the canvas buffer
+// to the true device resolution, so render() draws at native res (ctx scaled by renderScale) with
+// no post-scaling of the frame, which keeps motion smooth. Menu overlays sit in a separate
+// 1536x768 layer that is CSS-scaled to match, and mouse mapping reads getBoundingClientRect.
+const stageEl = document.querySelector(".stage");
+const playAreaEl = document.querySelector(".play-area");
+const overlayScaleEl = document.querySelector(".overlay-scale");
+let renderScale = 1; // buffer pixels per world pixel
+function fitApp() {
+  if (!stageEl || !playAreaEl) return;
+  const cs = getComputedStyle(stageEl);
+  const availW = stageEl.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+  const availH = stageEl.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+  const s = Math.min(availW / WORLD_W, availH / WORLD_H);
+  const dispW = Math.round(WORLD_W * s), dispH = Math.round(WORLD_H * s);
+  playAreaEl.style.width = dispW + "px";
+  playAreaEl.style.height = dispH + "px";
+  if (overlayScaleEl) overlayScaleEl.style.transform = `scale(${dispW / WORLD_W})`;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const bw = Math.max(1, Math.round(dispW * dpr)), bh = Math.max(1, Math.round(dispH * dpr));
+  canvas.style.width = dispW + "px";
+  canvas.style.height = dispH + "px";
+  if (canvas.width !== bw || canvas.height !== bh) { canvas.width = bw; canvas.height = bh; }
+  renderScale = bw / WORLD_W;
+}
+window.addEventListener("resize", fitApp);
+window.addEventListener("load", fitApp);
+fitApp();
+
+// The world-to-buffer scale, re-applied at the top of every frame since a canvas resize
+// resets all context state (transform, imageSmoothingEnabled).
+function applyWorldTransform() { ctx.setTransform(renderScale, 0, 0, renderScale, 0, 0); }
 
 const overlay = document.getElementById("overlay");
 const overlayTitle = document.getElementById("overlay-title");
@@ -283,10 +411,11 @@ window.addEventListener("keydown", unlockAudio);
 // spawn points to levelSpawns(), add its map to setupLevelMap(), and add a music playlist
 // for it in audio.js (playGameMusic).
 // ---------------------------------------------------------------------------
-const START_LEVEL = 1;
-const LEVEL_COUNT = 2;                 // distinct levels in the loop (1 = grass, 2 = cave)
+const GOD_MODE = false;                 // testing helper: start with all upgrade cards maxed and take no damage.
+const START_LEVEL = 1;                 // 1 = normal play (loop through 1 -> 2 -> 3). Set to 2/3 to jump into a level for design work.
+const LEVEL_COUNT = 3;                 // distinct levels in the loop (1 = grass, 2 = cave, 3 = sewer)
 const CARDS_PER_LEVEL = 10;            // upgrade cards taken within a level before it ends
-// The run loops forever: level 1 -> 2 -> 1 -> 2 ... Every time it wraps back to level 1 a
+// The run loops forever: level 1 -> 2 -> 3 -> 1 -> 2 -> 3 ... Every time it wraps back to level 1 a
 // new, harder cycle begins. Enemies gain a flat HP bump and a flat speed bump per cycle
 // (cycle 0 = base stats), so each pass through the same level is tougher than the last.
 const CYCLE_HP_STEP = 10;
@@ -328,6 +457,7 @@ const state = {
   player: freshPlayer(0),
   enemies: [],
   projectiles: [],
+  enemyProjectiles: [],
   tileMap: buildStartingMap(),
   lastSpawnAt: 0,
 };
@@ -339,17 +469,20 @@ const state = {
 // ---------------------------------------------------------------------------
 function cellSolid(x, y) {
   if (x < 0 || x >= MAP_COLS || y < 0 || y >= MAP_ROWS) return true;
+  if (level === 3) return l3Solid(x, y);
   if (level === 2) return l2Solid(x, y);
   return isSolid(state.tileMap[y][x]) || isFortAt(x, y);
 }
 function cellBlocksProjectile(x, y) {
   if (x < 0 || x >= MAP_COLS || y < 0 || y >= MAP_ROWS) return true;
+  if (level === 3) return l3BlocksProjectile(x, y);
   if (level === 2) return l2BlocksProjectile(x, y);
   return blocksProjectile(state.tileMap[y][x]) || isFortAt(x, y);
 }
 // Shared by player and enemies so enemy speedScale stays a true fraction of player
 // speed on the same terrain. Otherwise enemies outpace a grass-slowed player.
 function cellSpeedMult(x, y) {
+  if (level === 3) return l3SpeedMult(x, y);
   if (level === 2) return l2SpeedMult(x, y);
   const t = state.tileMap[y][x];
   if (t === TILES.PATH) return PATH_SPEED_MULT;
@@ -487,8 +620,8 @@ function onKeyUp(event) {
 // Canvas mouse position in internal pixels (the CSS display size may differ).
 function setMouseFromEvent(event) {
   const rect = canvas.getBoundingClientRect();
-  mouseX = (event.clientX - rect.left) * (canvas.width / rect.width);
-  mouseY = (event.clientY - rect.top) * (canvas.height / rect.height);
+  mouseX = (event.clientX - rect.left) * (WORLD_W / rect.width);
+  mouseY = (event.clientY - rect.top) * (WORLD_H / rect.height);
 }
 
 // The player's authoritative tile (destination of any in-flight move).
@@ -501,6 +634,20 @@ function playerTile() {
 function playerCenterPx() {
   const t = playerTile();
   return { x: t.x * TILE_SIZE + TILE_SIZE / 2, y: t.y * TILE_SIZE + TILE_SIZE / 2 };
+}
+
+// The player's interpolated pixel center mid-move, mirroring enemyCenterPx (how arrow-vs-enemy
+// collision works), so enemy fireballs hit where the ranger is drawn, not its destination tile.
+function playerCenterPxAt(now) {
+  const p = state.player;
+  let cx = p.x, cy = p.y;
+  if (p.moving) {
+    const dur = p.moveDuration || PLAYER_MOVE_DURATION_MS;
+    const t = Math.max(0, Math.min(1, (now - p.moveStartAt) / dur));
+    cx = lerp(p.fromX, p.toX, t);
+    cy = lerp(p.fromY, p.toY, t);
+  }
+  return { x: (cx + 0.5) * TILE_SIZE, y: (cy + 0.5) * TILE_SIZE };
 }
 
 // Exact angle (radians) from the player to the cursor, for free-aim shots.
@@ -549,8 +696,13 @@ function shiftTimers(delta) {
     e.deathStart += delta;
     e.attackStart += delta;
     e.hurtUntil += delta;
+    e.summonStart += delta;
+    e.lastAttackAt += delta;
+    if (e.lastSummonAt !== null) e.lastSummonAt += delta;
+    if (e.spawnFadeUntil) e.spawnFadeUntil += delta;
   }
   for (const pr of state.projectiles) pr.lastStepAt += delta;
+  for (const pr of state.enemyProjectiles) pr.lastStepAt += delta;
 }
 
 function togglePause() {
@@ -572,16 +724,16 @@ function togglePause() {
 function renderPauseScreen() {
   render(pausedAt);
   ctx.fillStyle = "rgba(12, 13, 16, 0.6)";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillRect(0, 0, WORLD_W, WORLD_H);
   ctx.save();
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.fillStyle = "#e8e8e8";
   ctx.font = "bold 78px ui-monospace, Menlo, monospace";
-  ctx.fillText("PAUSE", canvas.width / 2, canvas.height / 2 - 24);
+  ctx.fillText("PAUSE", WORLD_W / 2, WORLD_H / 2 - 24);
   ctx.fillStyle = "#7d8088";
   ctx.font = "33px ui-monospace, Menlo, monospace";
-  ctx.fillText("Press space to continue", canvas.width / 2, canvas.height / 2 + 45);
+  ctx.fillText("Press space to continue", WORLD_W / 2, WORLD_H / 2 + 45);
   ctx.restore();
 }
 
@@ -747,14 +899,14 @@ let flowGoalX = -1;
 let flowGoalY = -1;
 let flowMap = null;
 function goalFlowField(goalX, goalY) {
-  const mapRef = level === 2 ? l2Grid() : state.tileMap;
+  const mapRef = level === 3 ? l3Grid() : level === 2 ? l2Grid() : state.tileMap;
   if (flowField === null || goalX !== flowGoalX || goalY !== flowGoalY || flowMap !== mapRef) {
     // Terrain cost = inverse of how fast the tile is walked, so cheaper (faster) path
     // tiles pull routes toward themselves even when the detour is a little longer.
     const cost = (x, y) => 1 / cellSpeedMult(x, y);
-    flowField = level === 2
-      ? buildFlowField(goalX, goalY, null, (x, y) => l2Solid(x, y), cost)
-      : buildFlowField(goalX, goalY, state.tileMap, null, cost);
+    if (level === 3) flowField = buildFlowField(goalX, goalY, null, (x, y) => l3Solid(x, y), cost);
+    else if (level === 2) flowField = buildFlowField(goalX, goalY, null, (x, y) => l2Solid(x, y), cost);
+    else flowField = buildFlowField(goalX, goalY, state.tileMap, null, cost);
     flowGoalX = goalX;
     flowGoalY = goalY;
     flowMap = mapRef;
@@ -804,12 +956,23 @@ function spawnEnemyAt(fort, now) {
     attackStart: 0,
     hp: enemyHp(typeKey),
     hurtUntil: 0,
+    // Necromancer AI state (ignored by melee types).
+    summonedMinion: null,
+    lastSummonAt: null,
+    lastAttackAt: -1e9,
+    summoning: false,
+    summonStart: 0,
+    summonReleased: false,
+    projReleased: false,
+    spawnFadeUntil: 0,
   });
 }
 
 function maybeSpawnEnemy(now) {
   if (now - state.lastSpawnAt < spawnIntervalMs()) return;
-  const deficit = targetEnemyCount() - state.enemies.length;
+  // Summoned skeletons don't count toward the target population, only fort-spawned enemies do.
+  const forted = state.enemies.reduce((n, e) => n + (ALL_TYPES[e.type].kind === "skeleton" ? 0 : 1), 0);
+  const deficit = targetEnemyCount() - forted;
   if (deficit <= 0) return;
   // Spawn only on this level's points that no enemy occupies (never stack on a tile).
   const openForts = levelSpawns().filter((s) => !isEnemyAt(s.x, s.y));
@@ -840,6 +1003,9 @@ function stepEnemies(now) {
 
     if (now < enemy.hurtUntil) { enemy.moving = false; continue; }
 
+    // Necromancers are ranged summoners with their own AI (no melee windup).
+    if (type.kind === "necro") { stepNecro(enemy, now, goalX, goalY); continue; }
+
     // Damage lands when the windup finishes, so the player can dodge out of range.
     if (enemy.attacking) {
       if (now - enemy.attackStart >= type.attackWindupMs) {
@@ -865,7 +1031,11 @@ function stepEnemies(now) {
       else if (goalX < enemy.x) enemy.facing = "left";
       continue;
     }
-    const next = nextStepFromField(field, enemy.x, enemy.y, cellSolid);
+    // Floating skeletons path over water, grounded enemies use the normal field.
+    const floats = type.floats === true;
+    const stepField = floats ? goalFlowFieldFloat(goalX, goalY) : field;
+    const solidTest = floats ? floaterSolid : cellSolid;
+    const next = nextStepFromField(stepField, enemy.x, enemy.y, solidTest);
     if (next === null) continue;
     enemy.fromX = enemy.x;
     enemy.fromY = enemy.y;
@@ -963,7 +1133,7 @@ function damageEnemy(enemy, now) {
     enemy.dying = true;
     enemy.deathStart = now;
     enemy.moving = false;
-    state.kills++;
+    if (ALL_TYPES[enemy.type].kind !== "skeleton") state.kills++; // only real enemies score
   } else {
     enemy.hurtUntil = now + HURT_HOLD_MS;
     enemy.moving = false;
@@ -976,7 +1146,7 @@ function damagePlayer(now, dmg) {
   const p = state.player;
   if (p.dying) return;
   if (now < invulnUntil) return; // ignore hits during the invulnerability window
-  state.lives = Math.max(0, state.lives - dmg);
+  if (!GOD_MODE) state.lives = Math.max(0, state.lives - dmg); // god mode: hurt fx play but no life is lost
   playSfx("hurt");
   damageFlashUntil = now + DAMAGE_FLASH_MS;
   if (state.lives <= 0) {
@@ -1091,8 +1261,8 @@ let l1BgSpritesReady = false;
 function level1Background() {
   if (l1Bg === null || l1BgMap !== state.tileMap || l1BgSpritesReady !== spritesReady) {
     const cv = document.createElement("canvas");
-    cv.width = canvas.width;
-    cv.height = canvas.height;
+    cv.width = WORLD_W;
+    cv.height = WORLD_H;
     const g = cv.getContext("2d");
     renderTiles(g);
     renderSpawnMarkers(g);
@@ -1131,6 +1301,161 @@ function renderProjectiles() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Necromancer AI + enemy projectiles (level 3)
+// ---------------------------------------------------------------------------
+
+// A floater (skeleton_three) treats only walls as solid, so it drifts over water.
+function floaterSolid(x, y) {
+  if (x < 0 || x >= MAP_COLS || y < 0 || y >= MAP_ROWS) return true;
+  if (level === 3) return l3BlocksProjectile(x, y);
+  return cellSolid(x, y);
+}
+let flowFieldFloat = null, flowGoalFloatX = -1, flowGoalFloatY = -1, flowMapFloat = null;
+function goalFlowFieldFloat(goalX, goalY) {
+  const mapRef = level === 3 ? l3Grid() : state.tileMap;
+  if (flowFieldFloat === null || goalX !== flowGoalFloatX || goalY !== flowGoalFloatY || flowMapFloat !== mapRef) {
+    const cost = (x, y) => 1 / cellSpeedMult(x, y);
+    flowFieldFloat = buildFlowField(goalX, goalY, null, (x, y) => floaterSolid(x, y), cost);
+    flowGoalFloatX = goalX; flowGoalFloatY = goalY; flowMapFloat = mapRef;
+  }
+  return flowFieldFloat;
+}
+
+const tileDist = (ax, ay, bx, by) => Math.hypot(ax - bx, ay - by);
+
+// Spawn a matching skeleton minion next to the necromancer, fading in.
+function summonSkeleton(necro, ntype, now) {
+  const skelKey = ntype.skeleton;
+  const floats = ALL_TYPES[skelKey].floats === true;
+  let sx = necro.x, sy = necro.y;
+  for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1]]) {
+    const nx = necro.x + dx, ny = necro.y + dy;
+    if (nx < 0 || nx >= MAP_COLS || ny < 0 || ny >= MAP_ROWS) continue;
+    const blocked = floats ? floaterSolid(nx, ny) : cellSolid(nx, ny);
+    if (blocked || isEnemyAt(nx, ny)) continue;
+    sx = nx; sy = ny; break;
+  }
+  const skel = {
+    x: sx, y: sy, moving: false, moveStartAt: 0, moveDuration: 0,
+    fromX: sx, fromY: sy, toX: sx, toY: sy, facing: necro.facing,
+    type: skelKey, anim: "IDLE", animStart: now, dying: false, deathStart: 0,
+    attacking: false, attackStart: 0, hp: enemyHp(skelKey), hurtUntil: 0,
+    summonedMinion: null, lastSummonAt: null, lastAttackAt: -1e9,
+    summoning: false, summonStart: 0, summonReleased: false, projReleased: false,
+    spawnFadeUntil: now + SUMMON_FADE_MS,
+  };
+  state.enemies.push(skel);
+  necro.summonedMinion = skel;
+  necro.lastSummonAt = now;
+}
+
+// Fire a slow, non-homing fireball toward where the player is right now (dodgeable).
+function spawnNecroProjectile(enemy, type, now) {
+  const t = playerTile();
+  const ex = (enemy.x + 0.5) * TILE_SIZE, ey = (enemy.y + 0.5) * TILE_SIZE;
+  const ang = Math.atan2((t.y + 0.5) * TILE_SIZE - ey, (t.x + 0.5) * TILE_SIZE - ex);
+  state.enemyProjectiles.push({
+    px: ex, py: ey, vx: Math.cos(ang) * NECRO_PROJECTILE_SPEED, vy: Math.sin(ang) * NECRO_PROJECTILE_SPEED,
+    angle: ang, traveled: 0, damage: type.damage, sprite: type.projectile, lastStepAt: now,
+  });
+}
+
+function stepNecro(enemy, now, goalX, goalY) {
+  const type = ALL_TYPES[enemy.type];
+  const dist = tileDist(enemy.x, enemy.y, goalX, goalY);
+  // Drop a dead/removed minion reference so the necromancer can summon again.
+  if (enemy.summonedMinion && (enemy.summonedMinion.dying || !state.enemies.includes(enemy.summonedMinion))) {
+    enemy.summonedMinion = null;
+  }
+  if (goalX > enemy.x) enemy.facing = "right"; else if (goalX < enemy.x) enemy.facing = "left";
+
+  // Finish an in-progress summon (never interrupted), release the skeleton mid-cast.
+  if (enemy.summoning) {
+    enemy.moving = false;
+    if (!enemy.summonReleased && now - enemy.summonStart >= NECRO_SUMMON_HOLD_MS * 0.5) {
+      summonSkeleton(enemy, type, now); enemy.summonReleased = true;
+    }
+    if (now - enemy.summonStart >= NECRO_SUMMON_HOLD_MS) enemy.summoning = false;
+    return;
+  }
+  // Finish an in-progress attack (never interrupted), release the fireball mid-cast.
+  if (enemy.attacking) {
+    enemy.moving = false;
+    if (!enemy.projReleased && now - enemy.attackStart >= NECRO_PROJECTILE_RELEASE_MS) {
+      spawnNecroProjectile(enemy, type, now); enemy.projReleased = true;
+    }
+    if (now - enemy.attackStart >= NECRO_ATTACK_HOLD_MS) enemy.attacking = false;
+    return;
+  }
+  // Priority 1: summon (one minion at a time, 10s cooldown from the first summon).
+  const cooldownOk = enemy.lastSummonAt === null || now - enemy.lastSummonAt >= NECRO_SUMMON_COOLDOWN_MS;
+  if (!enemy.summonedMinion && cooldownOk && dist <= NECRO_SUMMON_RANGE) {
+    enemy.summoning = true; enemy.summonStart = now; enemy.summonReleased = false; enemy.moving = false;
+    return;
+  }
+  // Priority 2: attack when in range and off cooldown.
+  if (dist <= NECRO_ATTACK_RANGE) {
+    if (now - enemy.lastAttackAt >= NECRO_ATTACK_COOLDOWN_MS) {
+      enemy.attacking = true; enemy.attackStart = now; enemy.projReleased = false;
+      enemy.lastAttackAt = now; enemy.moving = false;
+      return;
+    }
+    // In range but reloading: hold position (finish any tween first).
+    if (enemy.moving && now - enemy.moveStartAt >= enemy.moveDuration) { enemy.x = enemy.toX; enemy.y = enemy.toY; enemy.moving = false; }
+    return;
+  }
+  // Otherwise close the distance to attack range (grounded pathing).
+  if (enemy.moving) {
+    if (now - enemy.moveStartAt < enemy.moveDuration) return;
+    enemy.x = enemy.toX; enemy.y = enemy.toY; enemy.moving = false;
+  }
+  const next = nextStepFromField(goalFlowField(goalX, goalY), enemy.x, enemy.y, cellSolid);
+  if (next === null) return;
+  enemy.fromX = enemy.x; enemy.fromY = enemy.y; enemy.toX = next.x; enemy.toY = next.y;
+  if (next.x > enemy.x) enemy.facing = "right"; else if (next.x < enemy.x) enemy.facing = "left";
+  let dur = enemyStepDuration(enemy.type, next.x, next.y);
+  if (next.x !== enemy.x && next.y !== enemy.y) dur = Math.round(dur * DIAG_DURATION_FACTOR);
+  enemy.moveDuration = dur; enemy.moveStartAt = now; enemy.moving = true;
+}
+
+// Advance enemy fireballs. Walls stop them (water doesn't), they fizzle at max range, and
+// a hit costs the player a heart. Movement dodges them since they don't home.
+function stepEnemyProjectiles(now) {
+  if (!state.enemyProjectiles.length) return;
+  const pc = playerCenterPxAt(now);
+  const remaining = [];
+  const hitR2 = (TILE_SIZE * 0.4) * (TILE_SIZE * 0.4);
+  for (const p of state.enemyProjectiles) {
+    const dt = now - p.lastStepAt; p.lastStepAt = now;
+    p.px += p.vx * dt; p.py += p.vy * dt; p.traveled += NECRO_PROJECTILE_SPEED * dt;
+    const tx = Math.floor(p.px / TILE_SIZE), ty = Math.floor(p.py / TILE_SIZE);
+    if (tx < 0 || tx >= MAP_COLS || ty < 0 || ty >= MAP_ROWS) continue;
+    if (cellBlocksProjectile(tx, ty)) continue;
+    if (p.traveled >= NECRO_PROJECTILE_RANGE * TILE_SIZE) continue;
+    if (!state.player.dying) {
+      const dx = p.px - pc.x, dy = p.py - pc.y;
+      if (dx * dx + dy * dy <= hitR2) { damagePlayer(now, p.damage); continue; }
+    }
+    remaining.push(p);
+  }
+  state.enemyProjectiles = remaining;
+}
+
+function renderEnemyProjectiles() {
+  if (!state.enemyProjectiles.length) return;
+  ctx.imageSmoothingEnabled = true;
+  for (const p of state.enemyProjectiles) {
+    const img = sprites[p.sprite];
+    ctx.save();
+    ctx.translate(p.px, p.py);
+    ctx.rotate(p.angle);
+    if (img) ctx.drawImage(img, -img.width / 2, -img.height / 2);
+    else { ctx.fillStyle = "#8fd3ff"; ctx.beginPath(); ctx.arc(0, 0, 9, 0, Math.PI * 2); ctx.fill(); }
+    ctx.restore();
+  }
+}
+
 function renderEnemies(now) {
   ctx.imageSmoothingEnabled = true; // smooth the downscaled character sheets
 
@@ -1161,12 +1486,21 @@ function renderEnemies(now) {
       desired = "HURT";
       enemy.anim = desired;
       frameIndex = animFrameIndex(enemy.hurtUntil - HURT_HOLD_MS, now, "HURT", true);
+    } else if (enemy.summoning) {
+      desired = "SUMMON";
+      enemy.anim = desired;
+      frameIndex = animFrameIndex(enemy.summonStart, now, "SUMMON", true);
     } else if (enemy.attacking) {
       desired = "ATTACK";
       enemy.anim = desired;
-      // Stretch the swing across the windup so it lands on the final frame.
-      const stepMs = type.attackWindupMs / ANIM_FRAMES;
-      frameIndex = Math.min(ANIM_FRAMES - 1, Math.floor((now - enemy.attackStart) / stepMs));
+      if (type.attackWindupMs) {
+        // Melee: stretch the swing across the windup so it lands on the final frame.
+        const stepMs = type.attackWindupMs / ANIM_FRAMES;
+        frameIndex = Math.min(ANIM_FRAMES - 1, Math.floor((now - enemy.attackStart) / stepMs));
+      } else {
+        // Necromancer cast plays once over the fixed hold.
+        frameIndex = animFrameIndex(enemy.attackStart, now, "ATTACK", true);
+      }
     } else {
       if (enemy.moving) {
         desired = cellSpeedMult(enemy.toX, enemy.toY) > 1.0 ? "RUN" : "WALK";
@@ -1177,13 +1511,17 @@ function renderEnemies(now) {
       frameIndex = animFrameIndex(enemy.animStart, now, enemy.anim, false);
     }
 
-    // Knight sheet faces right. Flip when facing left.
+    // Summoned skeletons fade into existence over their first half-second.
+    const fading = enemy.spawnFadeUntil && now < enemy.spawnFadeUntil;
+    if (fading) { ctx.save(); ctx.globalAlpha = Math.max(0, Math.min(1, 1 - (enemy.spawnFadeUntil - now) / SUMMON_FADE_MS)); }
+    // Sheets face right. Flip when facing left.
     if (!drawAnim(type.cell, enemy.anim, frameIndex, centerX, baseY, enemy.facing === "left")) {
       ctx.fillStyle = "#c93737";
       ctx.beginPath();
       ctx.arc(centerX, baseY - TILE_SIZE * 0.4, TILE_SIZE * 0.4, 0, Math.PI * 2);
       ctx.fill();
     }
+    if (fading) ctx.restore();
   }
 }
 
@@ -1235,12 +1573,13 @@ function renderPlayer(now) {
 }
 
 function render(now) {
+  applyWorldTransform();
   ctx.fillStyle = "#000";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  if (level === 2) {
-    // Level 2's whole map (floor, water froth, lava char, paths, rocks, border)
-    // is pre-rendered to an offscreen canvas when the level loads, so we just blit it.
-    const bg = l2Background();
+  ctx.fillRect(0, 0, WORLD_W, WORLD_H);
+  if (level === 2 || level === 3) {
+    // Levels 2 (cave) and 3 (sewer) pre-render their whole map to an offscreen canvas when
+    // the level loads, so we just blit it each frame.
+    const bg = level === 3 ? l3Background() : l2Background();
     if (bg) { ctx.imageSmoothingEnabled = false; ctx.drawImage(bg, 0, 0); }
   } else {
     // Level 1's map is baked the same way (see level1Background) and blitted.
@@ -1250,6 +1589,7 @@ function render(now) {
   renderEnemies(now);
   renderPlayer(now);
   renderProjectiles(); // above the characters, so arrows never show through them
+  renderEnemyProjectiles();
   renderDamageVignette(now);
 }
 
@@ -1259,15 +1599,15 @@ function renderDamageVignette(now) {
   if (remaining <= 0) return;
   const t = remaining / DAMAGE_FLASH_MS;
   const alpha = Math.min(1, t) * 0.6;
-  const cx = canvas.width / 2;
-  const cy = canvas.height / 2;
+  const cx = WORLD_W / 2;
+  const cy = WORLD_H / 2;
   const inner = Math.min(cx, cy) * 0.45;
   const outer = Math.hypot(cx, cy);
   const grad = ctx.createRadialGradient(cx, cy, inner, cx, cy, outer);
   grad.addColorStop(0, "rgba(200, 0, 0, 0)");
   grad.addColorStop(1, `rgba(200, 0, 0, ${alpha})`);
   ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillRect(0, 0, WORLD_W, WORLD_H);
 }
 
 // ---------------------------------------------------------------------------
@@ -1282,18 +1622,19 @@ const pixelScratch = document.createElement("canvas");
 // Draw `src` into the main canvas pixelated by `amount` (0 = crisp, 1 = coarse blocks)
 // and darkened toward black by the same amount.
 function drawPixelated(src, amount) {
+  applyWorldTransform();
   const block = 1 + Math.round(amount * 40);
-  const sw = Math.max(1, Math.round(canvas.width / block));
-  const sh = Math.max(1, Math.round(canvas.height / block));
+  const sw = Math.max(1, Math.round(WORLD_W / block));
+  const sh = Math.max(1, Math.round(WORLD_H / block));
   pixelScratch.width = sw; pixelScratch.height = sh;
   const pctx = pixelScratch.getContext("2d");
   pctx.imageSmoothingEnabled = false;
   pctx.clearRect(0, 0, sw, sh);
   pctx.drawImage(src, 0, 0, sw, sh);
   ctx.imageSmoothingEnabled = false;
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.drawImage(pixelScratch, 0, 0, sw, sh, 0, 0, canvas.width, canvas.height);
-  if (amount > 0) { ctx.fillStyle = `rgba(0,0,0,${amount})`; ctx.fillRect(0, 0, canvas.width, canvas.height); }
+  ctx.clearRect(0, 0, WORLD_W, WORLD_H);
+  ctx.drawImage(pixelScratch, 0, 0, sw, sh, 0, 0, WORLD_W, WORLD_H);
+  if (amount > 0) { ctx.fillStyle = `rgba(0,0,0,${amount})`; ctx.fillRect(0, 0, WORLD_W, WORLD_H); }
 }
 
 function snapshotCanvas() {
@@ -1320,6 +1661,7 @@ function startLevelTransition(now) {
 // own. Add a branch here for each new level.
 function setupLevelMap(n) {
   if (n === 2) generateLevel2(sprites);
+  else if (n === 3) generateLevel3(sprites);
   else state.tileMap = buildStartingMap();
 }
 
@@ -1335,6 +1677,7 @@ function enterLevel(n, now) {
   levelCardBaseline = buffsAwarded; // per-level card unlocks reset, buffs still carry over
   state.enemies = [];
   state.projectiles = [];
+  state.enemyProjectiles = [];
   pendingShot = null;
   state.player = freshPlayer(now);
   playerAttackUntil = 0;
@@ -1397,6 +1740,7 @@ function loop(now) {
       maybeFireOmni(now);
       stepEnemies(now);
       resolveCollisions(now);
+      stepEnemyProjectiles(now);
       render(now);
       updateHud(now, state);
       if (state.kills - killCardBaseline >= killsPerCard()) {
@@ -1417,6 +1761,7 @@ function loop(now) {
 
 function start() {
   resetState();
+  if (GOD_MODE) applyMaxBuffs(state); // testing: fully-kitted archer
   state.running = true;
   state.paused = false;
   state.startedAt = performance.now();
@@ -1459,6 +1804,7 @@ function resetState() {
   resetRunStats(ranger);
   state.enemies = [];
   state.projectiles = [];
+  state.enemyProjectiles = [];
   state.tileMap = buildStartingMap();
 }
 
