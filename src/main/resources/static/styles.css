@@ -325,22 +325,27 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
+  gap: 12px; /* even spacing between title, text, ranger cards, the slot, and the buttons */
 }
 
-/* Start button and score form span the full left column. */
-#overlay-button {
+/* Buttons row spans the left column. Main Menu (game over only) sits left of Start. */
+.overlay-buttons {
+  display: flex;
+  gap: 10px;
   width: 100%;
-  margin-top: 6px;
 }
+.overlay-buttons > button { flex: 1 1 0; }
+#main-menu-button { display: none; }
+.overlay.game-over #main-menu-button { display: block; }
 
 .overlay h1 {
-  margin: 0 0 8px;
+  margin: 0;
   font-size: 24px;
   color: var(--accent);
 }
 
 .overlay p {
-  margin: 0 0 16px;
+  margin: 0;
   color: var(--muted);
   white-space: nowrap;
 }
@@ -366,8 +371,23 @@ body {
   align-items: stretch;
   justify-content: center;
   gap: 14px;
-  margin: 0 0 16px;
 }
+
+/* Ranger cards and ultimate cards share a fixed width so the ultimate row lines up under
+   the rangers. Both are click targets that select their ranger and share the gold highlight. */
+.char-option,
+.ult-card {
+  width: 160px;
+  box-sizing: border-box;
+  background: #1d1f25;
+  border: 2px solid #2c2e34;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.char-option:hover,
+.ult-card:hover { border-color: var(--muted); }
+.char-option.selected,
+.ult-card.selected { border-color: var(--accent); }
 
 .char-option {
   display: flex;
@@ -375,17 +395,49 @@ body {
   align-items: center;
   gap: 8px;
   padding: 8px;
-  background: #1d1f25;
-  border: 2px solid #2c2e34;
-  border-radius: 8px;
-  cursor: pointer;
 }
-.char-option:hover { border-color: var(--muted); }
-.char-option.selected { border-color: var(--accent); }
 
 .char-card {
-  image-rendering: pixelated;
+  image-rendering: auto; /* smooth: the detailed sprites are downscaled, not pixel art */
 }
+
+/* Ultimate card under each ranger: the Space ability's name. */
+.ult-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 10px;
+  text-align: center;
+}
+.ult-label {
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 9px;
+}
+.ult-name {
+  color: var(--accent);
+  font-weight: 700;
+  font-size: 13px;
+}
+
+/* The ultimate row (menu) and the score form (game over) occupy the same slot by overlapping
+   in one grid cell, so both panels are exactly the same size and the space is always filled. */
+.menu-slot {
+  display: grid;
+  width: 100%;
+}
+.menu-slot > * { grid-area: 1 / 1; }
+
+.ult-row {
+  display: flex;
+  justify-content: center;
+  gap: 14px;
+}
+.overlay.game-over #ult-row { visibility: hidden; }
+.overlay.game-over #score-form { visibility: visible; }
 
 .char-stats {
   display: flex;
@@ -406,6 +458,7 @@ body {
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
+  white-space: nowrap; /* keep "Attack Speed" / "Movement Speed" on one line */
 }
 
 .pips {
@@ -544,7 +597,7 @@ body {
   align-items: center;
   gap: 8px;
   width: 100%;
-  margin: 16px 0 4px;
+  margin: 0;
 }
 
 /* On the main menu the form is hidden but keeps its space, so the left column is

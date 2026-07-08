@@ -2331,8 +2331,9 @@ function resetState() {
 function gameOver() {
   state.running = false;
   playMenuMusic();
+  overlay.classList.add("game-over"); // swaps the ultimate cards for the score form, shows Main Menu
   overlayTitle.textContent = `Enemies killed: ${state.kills}`;
-  overlayText.textContent = "Move with WASD. Aim with the mouse, left-click to shoot.";
+  overlayText.textContent = "Choose your ranger";
   resetScoreForm(true);
   overlay.classList.remove("hidden");
   refreshLeaderboard();
@@ -2347,8 +2348,21 @@ const charCards = Array.from(document.querySelectorAll(".char-option")).map((opt
   option: opt,
   canvas: opt.querySelector(".char-card"),
   ctx: opt.querySelector(".char-card").getContext("2d"),
+  ult: document.querySelector(`.ult-card[data-ranger="${opt.dataset.ranger}"]`),
   index: Number(opt.dataset.ranger),
 }));
+// Each ranger's Space ultimate name, shown on the card beneath it on the menu.
+const ULTIMATES = ["Invisibility", "Ballista", "Arrow Storm"];
+// Render the preview cards at a higher buffer resolution than their CSS box, so the menu's
+// scale-up stays crisp instead of upscaling a tiny bitmap. The CSS size is pinned to the
+// original design size first, so only the internal detail changes, not the layout.
+const CARD_RENDER_PX = 192;
+for (const { canvas } of charCards) {
+  canvas.style.width = `${canvas.width}px`;
+  canvas.style.height = `${canvas.height}px`;
+  canvas.width = CARD_RENDER_PX;
+  canvas.height = CARD_RENDER_PX;
+}
 let charPreviewRAF = 0;
 
 // Fill each ranger's box with its stat ratings (filled pips out of 3).
@@ -2359,6 +2373,9 @@ function buildStatBoxes() {
       const pips = [0, 1, 2].map((i) => `<span class="pip${i < rating ? " full" : ""}"></span>`).join("");
       return `<div class="stat-row"><span class="stat-label">${label}</span><span class="pips">${pips}</span></div>`;
     }).join("");
+    card.ult.innerHTML =
+      `<span class="ult-label">Ultimate</span>` +
+      `<span class="ult-name">${ULTIMATES[card.index]}</span>`;
   }
 }
 
@@ -2415,7 +2432,7 @@ function drawCharCard(card, now) {
   const cell = ARCHER_CELL;
   const box = archerContentBox(sheetName) || { x: 0, y: 0, w: cell.w, h: cell.h };
   const frame = animFrameIndex(0, now, "IDLE", false);
-  const pad = 12;
+  const pad = canvas.width / 8; // proportional, so framing is identical at any buffer resolution
   const scale = Math.min((canvas.width - pad) / box.w, (canvas.height - pad) / box.h);
   const dx = canvas.width / 2 - (box.x + box.w / 2) * scale;
   const dy = canvas.height / 2 - (box.y + box.h / 2) * scale;
@@ -2429,7 +2446,9 @@ function drawCharCard(card, now) {
 function drawCharPreview(now) {
   for (const card of charCards) {
     drawCharCard(card, now);
-    card.option.classList.toggle("selected", card.index === selectedRanger);
+    const selected = card.index === selectedRanger;
+    card.option.classList.toggle("selected", selected);
+    card.ult.classList.toggle("selected", selected);
   }
 }
 
@@ -2443,16 +2462,28 @@ function startCharPreviewLoop() {
   charPreviewRAF = requestAnimationFrame(tick);
 }
 
+function selectRanger(index) {
+  if (index !== selectedRanger) playSfx("select", 4); // only when switching
+  selectedRanger = index;
+  showRangerHud();
+  try { localStorage.setItem("recurve.ranger", String(selectedRanger)); } catch (_) { /* ignore */ }
+}
 for (const card of charCards) {
-  card.option.addEventListener("click", () => {
-    if (card.index !== selectedRanger) playSfx("select", 4); // only when switching
-    selectedRanger = card.index;
-    showRangerHud();
-    try { localStorage.setItem("recurve.ranger", String(selectedRanger)); } catch (_) { /* ignore */ }
-  });
+  card.option.addEventListener("click", () => selectRanger(card.index));
+  card.ult.addEventListener("click", () => selectRanger(card.index));
 }
 
+const mainMenuButton = document.getElementById("main-menu-button");
+// Return from the game-over screen to the opening menu (re-show the ultimate cards, hide the
+// score form) without starting a run.
+function showMainMenu() {
+  overlay.classList.remove("game-over");
+  overlayTitle.textContent = "Recurve";
+  overlayText.textContent = "Choose your ranger";
+  resetScoreForm(false);
+}
 overlayButton.addEventListener("click", () => { playSfx("select", 4); start(); });
+mainMenuButton.addEventListener("click", () => { playSfx("select", 4); showMainMenu(); });
 initScoreForm(() => state.kills); // submit button and Enter, wired in net.js
 window.addEventListener("keydown", onKeyDown);
 window.addEventListener("keyup", onKeyUp);
