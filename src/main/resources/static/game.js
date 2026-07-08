@@ -214,9 +214,11 @@ const NECRO_PROJECTILE_SCALE = 0.8;       // orbs draw 20% smaller than their so
 const SUMMON_FADE_MS = 500;               // a summoned skeleton fades in over this
 
 // --- Ultimate abilities (Space to activate; one per ranger) ---
-const ULT_COOLDOWN_MS = 30000;          // default cooldown (gray invisibility, crossbow turret)
-const ARROW_STORM_COOLDOWN_MS = 20000;  // green ranger's arrow storm
-const BALLISTA_FAST_COOLDOWN_MS = 20000; // crossbow's reduced cooldown once the card is taken
+const ULT_COOLDOWN_MS = 30000;          // gray invisibility cooldown (before per-kill reduction)
+const ARROW_STORM_COOLDOWN_MS = 20000;  // green ranger's arrow storm (before per-kill reduction)
+const BALLISTA_COOLDOWN_MS = 10000;      // crossbow turret cooldown
+const BALLISTA_FAST_COOLDOWN_MS = 5000;  // crossbow's reduced cooldown once the Ballista Cooldown card is taken
+const ULT_KILL_REDUCTION_MS = 500;       // each scoring kill charges invisibility / arrow storm this much faster
 const BALLISTA_STAT_MULT = 0.75;        // turret runs at 75% of the ranger's live stats
 const BALLISTA_MIN_HP = 3;              // turret health floor; only scales past this as the ranger's hearts grow
 const INVIS_DURATION_MS = 5000;         // gray ranger's base invisibility (+1s per upgrade card)
@@ -635,6 +637,7 @@ let ballistaCharging = 0;           // crossbow: dead turret slots waiting to re
 let ballistaChargeEnd = 0;          // crossbow: time the current recharge finishes (0 = none)
 let stormCharging = 0;              // green: arrow-storm charges currently recharging
 let stormChargeEnd = 0;             // green: time the current storm charge finishes (0 = none)
+let stormKillInProgress = false;    // true while an arrow-storm volley deals its kills (they don't recharge it)
 // A shot triggered but whose arrow hasn't left the bow yet.
 let pendingShot = null;
 
@@ -982,7 +985,7 @@ function burstRangeTiles() { return BURST_RANGE_TILES + Math.min(BURST_MAX_BONUS
 function arrowStormCharges() { return Math.min(3, Math.max(1, burstBonusTiles)); }
 function stormReadyCharges() { return arrowStormCharges() - stormCharging; }
 function ballistaSlots() { return Math.min(MAX_BALLISTAS, 1 + ballistaBonus); }
-function ballistaCooldownMs() { return ballistaFastCd ? BALLISTA_FAST_COOLDOWN_MS : ULT_COOLDOWN_MS; }
+function ballistaCooldownMs() { return ballistaFastCd ? BALLISTA_FAST_COOLDOWN_MS : BALLISTA_COOLDOWN_MS; }
 // Slots free to deploy right now: total slots minus the live turrets and those recharging.
 function readyBallistaSlots() { return ballistaSlots() - ballistas.length - ballistaCharging; }
 
@@ -1021,7 +1024,8 @@ function ultimateCircles(now) {
   }
   const active = now < invisUntil; // gray
   if (now >= ultReadyAt) return [{ fraction: 1, ready: true, active }];
-  return [{ fraction: 1 - (ultReadyAt - now) / ULT_COOLDOWN_MS, ready: false, active }];
+  // While invisible the cooldown hasn't started, so clamp the dial to empty (never negative).
+  return [{ fraction: Math.max(0, 1 - (ultReadyAt - now) / ULT_COOLDOWN_MS), ready: false, active }];
 }
 
 function activateUltimate(now) {
@@ -1037,7 +1041,7 @@ function activateUltimate(now) {
 function activateInvisibility(now) {
   invisUntil = now + invisDurationMs();
   ultCastAt = now;
-  ultReadyAt = now + ULT_COOLDOWN_MS;
+  ultReadyAt = invisUntil + ULT_COOLDOWN_MS; // cooldown starts only once invisibility wears off
   for (const e of state.enemies) { e.attacking = false; e.summoning = false; } // nothing lands as you vanish
 }
 
@@ -1087,6 +1091,7 @@ function activateArrowBurst(now) {
   const reach = burstRangeTiles();
   const t = playerTile();
   const px = (t.x + 0.5) * TILE_SIZE, py = (t.y + 0.5) * TILE_SIZE;
+  stormKillInProgress = true; // kills dealt by this volley must not recharge the ult
   for (const enemy of state.enemies) {
     if (enemy.dying) continue;
     if (Math.hypot(enemy.x - t.x, enemy.y - t.y) > reach) continue;
@@ -1100,6 +1105,7 @@ function activateArrowBurst(now) {
     });
     damageEnemy(enemy, now);
   }
+  stormKillInProgress = false;
   playSfx("bow", 10);
 }
 
@@ -1524,7 +1530,13 @@ function damageEnemy(enemy, now, dmg = playerDamage) {
     enemy.dying = true;
     enemy.deathStart = now;
     enemy.moving = false;
-    if (ALL_TYPES[enemy.type].kind !== "skeleton") state.kills++; // only real enemies score
+    if (ALL_TYPES[enemy.type].kind !== "skeleton") {
+      state.kills++; // only real enemies score
+      // Each scoring kill charges the active ranger's ultimate 0.5s faster: invisibility only
+      // while not vanished, arrow storm never from its own volley, the ballista stays fixed.
+      if (selectedRanger === 0 && now >= invisUntil) ultReadyAt = Math.max(now, ultReadyAt - ULT_KILL_REDUCTION_MS);
+      else if (selectedRanger === 2 && !stormKillInProgress && stormChargeEnd !== 0) stormChargeEnd = Math.max(now, stormChargeEnd - ULT_KILL_REDUCTION_MS);
+    }
   } else {
     enemy.hurtUntil = now + HURT_HOLD_MS;
     enemy.moving = false;
