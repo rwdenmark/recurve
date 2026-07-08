@@ -395,14 +395,18 @@ function fitApp() {
   renderScale = bw / WORLD_W;
   playAreaEl.style.visibility = "visible"; // sized now, safe to show (CSS hides it pre-fit)
 }
-// Resizing the buffer clears it, and the loop only paints during live play, so a resize
-// must repaint whatever static frame is on screen. Re-rendering with the timestamp of
-// the last painted frame reproduces it exactly, which keeps the frozen world visible
-// behind the card screen, the menu, and the game-over overlay instead of going black.
+// Resizing the buffer clears it, and the loop only paints during live play, so a resize must
+// repaint whatever static frame is on screen. Re-rendering with the last painted timestamp
+// reproduces it exactly, keeping the frozen world visible behind the card screen and game-over
+// overlay. Before the first game there is no world to show, so the opening menu paints dark.
+let everStarted = false; // set once the first game begins
 function onViewportResize() {
   fitApp();
   if (state.paused) { renderPauseScreen(); return; }
-  if (!state.running || state.choosingBuff) render(lastRenderAt);
+  if (!state.running || state.choosingBuff) {
+    if (everStarted) render(lastRenderAt);
+    else paintMenuBackdrop();
+  }
 }
 window.addEventListener("resize", onViewportResize);
 window.addEventListener("load", onViewportResize);
@@ -411,6 +415,14 @@ fitApp();
 // The world-to-buffer scale, re-applied at the top of every frame since a canvas resize
 // resets all context state (transform, imageSmoothingEnabled).
 function applyWorldTransform() { ctx.setTransform(renderScale, 0, 0, renderScale, 0, 0); }
+
+// Fill the canvas with the dark menu backdrop, used behind the opening menu where there is no
+// game world to show yet. Matches the overlay tint so the whole panel reads as one dark field.
+function paintMenuBackdrop() {
+  applyWorldTransform();
+  ctx.fillStyle = "#0c0d10";
+  ctx.fillRect(0, 0, WORLD_W, WORLD_H);
+}
 
 const overlay = document.getElementById("overlay");
 const overlayTitle = document.getElementById("overlay-title");
@@ -2236,6 +2248,7 @@ function loop(now) {
 
 function start() {
   resetState();
+  everStarted = true; // a real game world exists now, so resizes may repaint it behind overlays
   if (GOD_MODE) applyMaxBuffs(state); // testing: fully-kitted archer
   state.running = true;
   state.paused = false;
@@ -2454,8 +2467,8 @@ showRangerHud();
 const LOADING_MIN_MS = 2000;
 const loadingStart = performance.now();
 const spritesLoaded = loadSprites().then(() => {
-  spritesReady = true; // triggers a level 1 rebake with the real sprites
-  render(performance.now());
+  spritesReady = true; // real sprites are in; the level 1 map rebakes on the first in-game frame
+  paintMenuBackdrop(); // keep the opening menu dark rather than showing the level 1 map behind it
 });
 Promise.allSettled([spritesLoaded, refreshLeaderboard()]).then(() => {
   const wait = Math.max(0, LOADING_MIN_MS - (performance.now() - loadingStart));

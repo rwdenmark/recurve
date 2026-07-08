@@ -79,7 +79,7 @@ const BUFF_CARDS = [
   { title: "Ballista", stacking: true, cap: 2, dots: 2, ranger: 1, available: () => true,
     apply: () => { ballistaBonus += 1; } },
   // Unlocked only once both Extra Ballista cards are taken; drops the cooldown to 20s.
-  { title: "Faster Ballista", ranger: 1, available: () => ballistaBonus >= 2 && !ballistaFastCd,
+  { title: "Ballista Cooldown", ranger: 1, available: () => ballistaBonus >= 2 && !ballistaFastCd,
     apply: () => { ballistaFastCd = true; } },
   { title: "Arrow Storm", stacking: true, cap: 3, dots: 3, ranger: 2, available: () => true,
     apply: () => { burstBonusTiles += 1; } },
