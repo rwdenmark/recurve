@@ -311,7 +311,7 @@ function build() {
         if (reachesAllSpawns()) { carved = true; break; }
         for (const [x, y] of cells) grid[y][x] = L3.FLOOR; // reverted: would disconnect a spawn
       }
-      if (!carved) break; // biggest block can't be safely reduced; stop
+      if (!carved) break; // biggest block can't be safely reduced, stop
     }
   };
   punchFloor(); cleanWater();
@@ -337,7 +337,7 @@ function rotatedTile(src, deg) {
   const g = c.getContext("2d");
   g.imageSmoothingEnabled = false;
   g.translate(c.width / 2, c.height / 2);
-  g.rotate(-deg * Math.PI / 180); // canvas rotates clockwise; negate so 90/270 match the CCW-designed tiles
+  g.rotate(-deg * Math.PI / 180); // canvas rotates clockwise, negate so 90/270 match the CCW-designed tiles
   g.translate(-c.width / 2, -c.height / 2);
   g.drawImage(src, 0, 0);
   return c;

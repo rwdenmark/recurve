@@ -6,6 +6,7 @@
 // pause bookkeeping it can't do itself.
 
 import { renderHearts } from "./hud.js";
+import { playSfx } from "./audio.js";
 import { shuffleInPlace } from "./shuffle.js";
 
 // ---------------------------------------------------------------------------
@@ -38,11 +39,12 @@ export const KILLS_PER_CARD_FIRST_CYCLE = 10;
 const STACK_CAP = 10;           // max copies of a stacking buff
 const buffOverlay = document.getElementById("buff-overlay");
 const buffCardsEl = document.getElementById("buff-cards");
+const buffSubmitBtn = document.getElementById("buff-submit");
 let buffPausedAt = 0;
 
 // Only the title is shown, so the exact numbers stay hidden. Stacking buffs carry
 // a tally of how many you already hold (drawn as dots on the card). The special-rule
-// cards (Heal to Full, Multi-Shot, Omni-Shot) don't stack and show no tally.
+// cards (Heal to Full and Multi-Shot) don't stack and show no tally.
 // Cards that touch lives take the shared state object as `s`.
 const BUFF_CARDS = [
   { title: "Increase Life", stacking: true, available: () => true,
@@ -80,6 +82,12 @@ function pickBuffCards(n, s) {
   return finalPool.slice(0, Math.min(n, finalPool.length));
 }
 
+// Choosing a card is a two-step mouse flow (click to select, Confirm to apply) or a
+// one-step hotkey (1/2/3 takes that card instantly, bypassing the Confirm button).
+let pendingCards = [];   // cards on offer while the overlay is up
+let selectedCard = null; // mouse-selected card awaiting the confirm click
+let activeGame = null;   // the game handle for the current selection screen
+
 // `game` is the handle game.js passes in: { state, shiftTimers, clearHeldInput,
 // resume }. Buff selection pauses the run, so it needs those four hooks.
 export function startBuffSelection(now, game) {
@@ -89,8 +97,12 @@ export function startBuffSelection(now, game) {
   game.state.choosingBuff = true;
   buffPausedAt = now;
   game.clearHeldInput(); // drop held input so the player doesn't auto-move on resume
+  pendingCards = cards;
+  selectedCard = null;
+  activeGame = game;
+  buffSubmitBtn.disabled = true;
   buffCardsEl.innerHTML = "";
-  for (const card of cards) {
+  cards.forEach((card, slot) => {
     const el = document.createElement("button");
     el.type = "button";
     el.className = "buff-card";
@@ -103,15 +115,46 @@ export function startBuffSelection(now, game) {
           `<span class="buff-dot${i < (card.taken || 0) ? " full" : ""}"></span>`).join("") +
         `</span>`
       : "";
-    el.innerHTML = dots + `<span class="buff-title">${card.title}</span>`;
-    el.addEventListener("click", () => chooseBuff(card, game));
+    el.innerHTML = dots + `<span class="buff-title">${card.title}</span>` +
+      `<span class="buff-key">${slot + 1}</span>`;
+    el.addEventListener("click", () => selectBuffCard(card, el));
     buffCardsEl.appendChild(el);
-  }
+  });
+  window.addEventListener("keydown", onBuffKeyDown);
   buffOverlay.classList.remove("hidden");
 }
 
+// Mouse click on a card only selects it (yellow border + UI sound). The confirm
+// button applies it.
+function selectBuffCard(card, el) {
+  if (selectedCard !== card) playSfx("select", 4);
+  selectedCard = card;
+  for (const child of buffCardsEl.children) child.classList.toggle("selected", child === el);
+  buffSubmitBtn.disabled = false;
+}
+
+// Hotkeys 1/2/3 (top row or numpad) take the matching card instantly.
+function onBuffKeyDown(e) {
+  const idx = { Digit1: 0, Digit2: 1, Digit3: 2, Numpad1: 0, Numpad2: 1, Numpad3: 2 }[e.code];
+  if (idx === undefined || idx >= pendingCards.length) return;
+  e.preventDefault();
+  playSfx("select", 4);
+  chooseBuff(pendingCards[idx], activeGame);
+}
+
+buffSubmitBtn.addEventListener("click", () => {
+  if (!selectedCard || !activeGame) return;
+  playSfx("select", 4);
+  chooseBuff(selectedCard, activeGame);
+});
+
 function chooseBuff(card, game) {
-  if (!game.state.choosingBuff) return; // guard against double-clicks
+  if (!game || !game.state.choosingBuff) return; // guard against double-fires
+  window.removeEventListener("keydown", onBuffKeyDown);
+  pendingCards = [];
+  selectedCard = null;
+  activeGame = null;
+  buffSubmitBtn.disabled = true;
   card.apply(game.state);
   card.taken = (card.taken || 0) + 1;
   buffOverlay.classList.add("hidden");

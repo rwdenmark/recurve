@@ -153,6 +153,32 @@ class ScoreControllerTest {
     }
 
     @Test
+    void bidiMarksAndSoftHyphenAreRejected() throws Exception {
+        // LRM/RLM/ALM render as nothing (a "ryan" plus a mark spoofs the real "ryan"),
+        // and a soft hyphen can hide a profanity from the literal filter match.
+        for (String name : new String[]{"ryan\u200E", "ryan\u200F", "ryan\u061C", "f\u00ADuck"}) {
+            mockMvc.perform(post("/api/scores")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(json(name, 10, 60)))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.message").value("Name contains invisible or control characters"));
+        }
+    }
+
+    @Test
+    void blankRenderingFillersAndSeparatorsAreRejected() throws Exception {
+        // Hangul fillers and the line/paragraph separators render blank but survive
+        // trim(), so a name made of them would show as an empty leaderboard row.
+        for (String name : new String[]{"\u3164", "\u115F\u1160", "\uFFA0", "ry\u2028an", "ry\u2029an"}) {
+            mockMvc.perform(post("/api/scores")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(json(name, 10, 60)))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.message").value("Name contains invisible or control characters"));
+        }
+    }
+
+    @Test
     void internationalNamesAreAccepted() throws Exception {
         // The check targets invisible characters only. Accented and CJK names pass.
         mockMvc.perform(post("/api/scores")

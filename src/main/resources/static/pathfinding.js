@@ -17,7 +17,8 @@ const DIRS = [
 // cost matters: enterCost(x, y) returns the cost of stepping onto a tile, which lets
 // cheaper tiles (paths) be preferred even when the route is a little longer. With no
 // enterCost every tile costs the same and this reduces to shortest step-distance.
-// isBlocked(x, y) overrides the level-1 solid/fort test so level 2 supplies its own rules.
+// isBlocked(x, y) overrides the level-1 solid/fort test so each later level (and the
+// floating-skeleton field) supplies its own rules.
 export function buildFlowField(goalX, goalY, tileMap, isBlocked, enterCost) {
   const N = MAP_COLS * MAP_ROWS;
   const dist = new Float64Array(N).fill(Infinity);
@@ -51,8 +52,11 @@ export function buildFlowField(goalX, goalY, tileMap, isBlocked, enterCost) {
       }
     }
   }
-  // Hand back the familiar -1 sentinel for unreachable tiles.
-  return Array.from(dist, (v) => (v === Infinity ? -1 : v));
+  // Swap in the -1 sentinel for unreachable tiles in place. This is the hot rebuild
+  // path (once per player tile change), so no copy, and the typed array stays typed
+  // for the per-enemy reads in nextStepFromField.
+  for (let i = 0; i < N; i++) if (dist[i] === Infinity) dist[i] = -1;
+  return dist;
 }
 
 // The neighbor of (x, y) with the lowest field value, i.e. the next step toward the goal.

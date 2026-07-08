@@ -27,8 +27,9 @@ spring:
 
 server:
   port: ${PORT:8080}
-  # Gzip the text assets (JS/CSS/HTML/JSON) so the first load transfers less. Audio
-  # and images are already compressed and are not in the list, so they're untouched.
+  # Gzip the text assets (JS/CSS/HTML/JSON, plus SVG) so the first load transfers
+  # less. Audio and the raster images are already compressed, so they stay out of
+  # the list and go over the wire untouched.
   compression:
     enabled: true
     mime-types: text/html,text/css,text/javascript,application/javascript,application/json,image/svg+xml

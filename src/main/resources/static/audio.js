@@ -10,10 +10,24 @@ const sfxSlider = document.getElementById("sfx-slider");
 // Sound preferences persist across sessions in localStorage (same approach as
 // astro-siege), so the player's volume and mute choices survive a reload.
 const PREFS_KEY = "recurve.sound";
+// The stored blob is user-editable, so validate the shape and clamp the volumes instead
+// of trusting it. A null or out-of-range value would otherwise throw during module load
+// (volume above 1 raises IndexSizeError) and take the whole game down with it.
 function loadPrefs() {
   try {
     const raw = localStorage.getItem(PREFS_KEY);
-    if (raw) return JSON.parse(raw);
+    if (raw) {
+      const p = JSON.parse(raw);
+      if (p && typeof p === "object") {
+        const vol = (v) => (typeof v === "number" && Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : undefined);
+        return {
+          musicVolume: vol(p.musicVolume),
+          musicMuted: typeof p.musicMuted === "boolean" ? p.musicMuted : undefined,
+          sfxVolume: vol(p.sfxVolume),
+          sfxMuted: typeof p.sfxMuted === "boolean" ? p.sfxMuted : undefined,
+        };
+      }
+    }
   } catch (_) { /* storage unavailable (private mode, etc.) */ }
   return {};
 }
@@ -131,7 +145,7 @@ applyVolume();
 updateMuteIcon();
 
 // Keep the volume controls from stealing keyboard focus: leave them out of the tab order and
-// blur them after each interaction so WASD/space keep reaching the game instead of the slider.
+// blur them after each interaction so WASD and ESC keep reaching the game instead of the slider.
 for (const el of [musicSlider, sfxSlider, musicMuteBtn, sfxMuteBtn]) {
   el.tabIndex = -1;
   el.addEventListener("pointerup", () => el.blur());

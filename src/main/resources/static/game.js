@@ -76,7 +76,7 @@ const SPRITE_PATHS = {
   l3WallWaterCorner: "level_three/wall_water_corner.png",
   l3WaterFloorCorner: "level_three/water_floor_corner.png",
   l3Spawn1: "level_three/enemy_spawn_1.png",   // wall portal
-  l3Spawn2: "level_three/enemy_spawn_2.png",   // floor grate (base; variants below add a
+  l3Spawn2: "level_three/enemy_spawn_2.png",   // floor grate base (the variants below add a
   // water-wall border on each side that faces water, keyed by which neighbours are water)
   l3Spawn2T:    "level_three/enemy_spawn_2_top.png",
   l3Spawn2B:    "level_three/enemy_spawn_2_bottom.png",
@@ -205,7 +205,8 @@ const NECRO_ATTACK_HOLD_MS = ANIM_FRAMES * ANIM_FRAME_MS.ATTACK;
 const NECRO_SUMMON_HOLD_MS = ANIM_FRAMES * ANIM_FRAME_MS.SUMMON;
 const NECRO_PROJECTILE_RELEASE_MS = Math.round(NECRO_ATTACK_HOLD_MS * 0.6);
 const NECRO_PROJECTILE_SPEED = (TILE_SIZE / DEFAULT_MOVE_DURATION_MS) * 0.75; // 75% of player move speed
-const NECRO_PROJECTILE_RANGE = 9;         // tiles of travel before the fireball fizzles
+const NECRO_PROJECTILE_RANGE = 9;         // cap in tiles on how far an orb can be aimed
+const NECRO_PROJECTILE_SCALE = 0.8;       // orbs draw 20% smaller than their source art
 const SUMMON_FADE_MS = 500;               // a summoned skeleton fades in over this
 
 const PLAYER_MOVE_DURATION_MS = DEFAULT_MOVE_DURATION_MS;
@@ -365,8 +366,14 @@ function fitApp() {
   if (canvas.width !== bw || canvas.height !== bh) { canvas.width = bw; canvas.height = bh; }
   renderScale = bw / WORLD_W;
 }
-window.addEventListener("resize", fitApp);
-window.addEventListener("load", fitApp);
+// Resizing the buffer clears it, and the loop only paints during live play, so repaint
+// the pause screen when a resize lands while the game sits paused.
+function onViewportResize() {
+  fitApp();
+  if (state.running && state.paused) renderPauseScreen();
+}
+window.addEventListener("resize", onViewportResize);
+window.addEventListener("load", onViewportResize);
 fitApp();
 
 // The world-to-buffer scale, re-applied at the top of every frame since a canvas resize
@@ -426,9 +433,9 @@ const CYCLE_SPEED_STEP = 0.05;
 const KILLS_PER_CARD_LATER = 20;
 function killsPerCard() { return cycle === 0 ? KILLS_PER_CARD_FIRST_CYCLE : KILLS_PER_CARD_LATER; }
 
-// Which level is active (1 = grass/knights, 2 = cave/trolls), how many full loops have
-// been completed, and the buff count when the level began (so per-level card unlocks
-// reset while buffs still carry over).
+// Which level is active (1 = grass/knights, 2 = cave/trolls, 3 = sewer/necromancers),
+// how many full loops have been completed, and the buff count when the level began (so
+// per-level card unlocks reset while buffs still carry over).
 let level = 1;
 let cycle = 0;
 let levelCardBaseline = 0;
@@ -463,9 +470,10 @@ const state = {
 };
 
 // ---------------------------------------------------------------------------
-// Level-aware tile queries. Level 1 reads the mapgen tileMap. Level 2 reads the cave
-// terrain grid (level2.js). Movement, projectiles, pathfinding and rendering all go
-// through these so the rest of the game doesn't branch on the level.
+// Level-aware tile queries. Level 1 reads the mapgen tileMap, level 2 the cave grid
+// (level2.js), and level 3 the sewer grid (level3.js). Movement, projectiles,
+// pathfinding and rendering all go through these so the rest of the game doesn't
+// branch on the level.
 // ---------------------------------------------------------------------------
 function cellSolid(x, y) {
   if (x < 0 || x >= MAP_COLS || y < 0 || y >= MAP_ROWS) return true;
@@ -592,8 +600,8 @@ function onKeyDown(event) {
 
   if (state.choosingBuff) { event.preventDefault(); return; }
 
-  // Space toggles pause during a run. Escape is an undocumented alias.
-  if (event.code === "Space" || event.code === "Escape") {
+  // Escape toggles pause during a run.
+  if (event.code === "Escape") {
     if (state.running) {
       togglePause();
       event.preventDefault();
@@ -733,7 +741,7 @@ function renderPauseScreen() {
   ctx.fillText("PAUSE", WORLD_W / 2, WORLD_H / 2 - 24);
   ctx.fillStyle = "#7d8088";
   ctx.font = "33px ui-monospace, Menlo, monospace";
-  ctx.fillText("Press space to continue", WORLD_W / 2, WORLD_H / 2 + 45);
+  ctx.fillText("Press ESC to continue", WORLD_W / 2, WORLD_H / 2 + 45);
   ctx.restore();
 }
 
@@ -970,7 +978,10 @@ function spawnEnemyAt(fort, now) {
 
 function maybeSpawnEnemy(now) {
   if (now - state.lastSpawnAt < spawnIntervalMs()) return;
-  // Summoned skeletons don't count toward the target population, only fort-spawned enemies do.
+  // Summoned skeletons don't count toward the target population, only fort-spawned enemies
+  // do. They DO count against the performance cap, so the live total never passes it.
+  const room = maxEnemies() - state.enemies.length;
+  if (room <= 0) return;
   const forted = state.enemies.reduce((n, e) => n + (ALL_TYPES[e.type].kind === "skeleton" ? 0 : 1), 0);
   const deficit = targetEnemyCount() - forted;
   if (deficit <= 0) return;
@@ -981,7 +992,7 @@ function maybeSpawnEnemy(now) {
   // so a new level refills toward its high target quickly instead of easing in each time.
   // Shuffle so the batch uses distinct forts.
   const batch = 1 + Math.floor(buffsAwarded / 2);
-  const count = Math.min(deficit, openForts.length, batch);
+  const count = Math.min(deficit, room, openForts.length, batch);
   shuffleInPlace(openForts);
   for (let n = 0; n < count; n++) spawnEnemyAt(openForts[n], now);
   state.lastSpawnAt = now;
@@ -1350,20 +1361,23 @@ function summonSkeleton(necro, ntype, now) {
   necro.lastSummonAt = now;
 }
 
-// Fire a slow, non-homing fireball toward where the player is right now (dodgeable).
+// Fire a slow, non-homing orb toward where the player is right now (dodgeable).
 function spawnNecroProjectile(enemy, type, now) {
   const t = playerTile();
   const ex = (enemy.x + 0.5) * TILE_SIZE, ey = (enemy.y + 0.5) * TILE_SIZE;
-  const ang = Math.atan2((t.y + 0.5) * TILE_SIZE - ey, (t.x + 0.5) * TILE_SIZE - ex);
+  const tx = (t.x + 0.5) * TILE_SIZE, ty = (t.y + 0.5) * TILE_SIZE;
+  const ang = Math.atan2(ty - ey, tx - ex);
+  // The orb dies at the point it was aimed at, so standing on the aimed tile eats the
+  // hit and stepping aside dodges it. The range cap still bounds a long shot.
+  const maxTravel = Math.min(Math.hypot(tx - ex, ty - ey), NECRO_PROJECTILE_RANGE * TILE_SIZE);
   state.enemyProjectiles.push({
     px: ex, py: ey, vx: Math.cos(ang) * NECRO_PROJECTILE_SPEED, vy: Math.sin(ang) * NECRO_PROJECTILE_SPEED,
-    angle: ang, traveled: 0, damage: type.damage, sprite: type.projectile, lastStepAt: now,
+    angle: ang, traveled: 0, maxTravel, damage: type.damage, sprite: type.projectile, lastStepAt: now,
   });
 }
 
 function stepNecro(enemy, now, goalX, goalY) {
   const type = ALL_TYPES[enemy.type];
-  const dist = tileDist(enemy.x, enemy.y, goalX, goalY);
   // Drop a dead/removed minion reference so the necromancer can summon again.
   if (enemy.summonedMinion && (enemy.summonedMinion.dying || !state.enemies.includes(enemy.summonedMinion))) {
     enemy.summonedMinion = null;
@@ -1372,7 +1386,6 @@ function stepNecro(enemy, now, goalX, goalY) {
 
   // Finish an in-progress summon (never interrupted), release the skeleton mid-cast.
   if (enemy.summoning) {
-    enemy.moving = false;
     if (!enemy.summonReleased && now - enemy.summonStart >= NECRO_SUMMON_HOLD_MS * 0.5) {
       summonSkeleton(enemy, type, now); enemy.summonReleased = true;
     }
@@ -1381,35 +1394,35 @@ function stepNecro(enemy, now, goalX, goalY) {
   }
   // Finish an in-progress attack (never interrupted), release the fireball mid-cast.
   if (enemy.attacking) {
-    enemy.moving = false;
     if (!enemy.projReleased && now - enemy.attackStart >= NECRO_PROJECTILE_RELEASE_MS) {
       spawnNecroProjectile(enemy, type, now); enemy.projReleased = true;
     }
     if (now - enemy.attackStart >= NECRO_ATTACK_HOLD_MS) enemy.attacking = false;
     return;
   }
-  // Priority 1: summon (one minion at a time, 10s cooldown from the first summon).
-  const cooldownOk = enemy.lastSummonAt === null || now - enemy.lastSummonAt >= NECRO_SUMMON_COOLDOWN_MS;
-  if (!enemy.summonedMinion && cooldownOk && dist <= NECRO_SUMMON_RANGE) {
-    enemy.summoning = true; enemy.summonStart = now; enemy.summonReleased = false; enemy.moving = false;
-    return;
-  }
-  // Priority 2: attack when in range and off cooldown.
-  if (dist <= NECRO_ATTACK_RANGE) {
-    if (now - enemy.lastAttackAt >= NECRO_ATTACK_COOLDOWN_MS) {
-      enemy.attacking = true; enemy.attackStart = now; enemy.projReleased = false;
-      enemy.lastAttackAt = now; enemy.moving = false;
-      return;
-    }
-    // In range but reloading: hold position (finish any tween first).
-    if (enemy.moving && now - enemy.moveStartAt >= enemy.moveDuration) { enemy.x = enemy.toX; enemy.y = enemy.toY; enemy.moving = false; }
-    return;
-  }
-  // Otherwise close the distance to attack range (grounded pathing).
+  // Finish any in-flight step before choosing the next action. Casts only ever start
+  // from a standstill, so starting one never snaps the sprite back to the tile it left.
   if (enemy.moving) {
     if (now - enemy.moveStartAt < enemy.moveDuration) return;
     enemy.x = enemy.toX; enemy.y = enemy.toY; enemy.moving = false;
   }
+  const dist = tileDist(enemy.x, enemy.y, goalX, goalY);
+  // Priority 1: summon (one minion at a time, 10s cooldown from the first summon, and
+  // never past the live-enemy performance cap).
+  const cooldownOk = enemy.lastSummonAt === null || now - enemy.lastSummonAt >= NECRO_SUMMON_COOLDOWN_MS;
+  if (!enemy.summonedMinion && cooldownOk && dist <= NECRO_SUMMON_RANGE && state.enemies.length < maxEnemies()) {
+    enemy.summoning = true; enemy.summonStart = now; enemy.summonReleased = false;
+    return;
+  }
+  // Priority 2: attack when in range and off cooldown. Reloading in range holds position.
+  if (dist <= NECRO_ATTACK_RANGE) {
+    if (now - enemy.lastAttackAt >= NECRO_ATTACK_COOLDOWN_MS) {
+      enemy.attacking = true; enemy.attackStart = now; enemy.projReleased = false;
+      enemy.lastAttackAt = now;
+    }
+    return;
+  }
+  // Otherwise close the distance to attack range (grounded pathing).
   const next = nextStepFromField(goalFlowField(goalX, goalY), enemy.x, enemy.y, cellSolid);
   if (next === null) return;
   enemy.fromX = enemy.x; enemy.fromY = enemy.y; enemy.toX = next.x; enemy.toY = next.y;
@@ -1419,8 +1432,9 @@ function stepNecro(enemy, now, goalX, goalY) {
   enemy.moveDuration = dur; enemy.moveStartAt = now; enemy.moving = true;
 }
 
-// Advance enemy fireballs. Walls stop them (water doesn't), they fizzle at max range, and
-// a hit costs the player a heart. Movement dodges them since they don't home.
+// Advance enemy orbs. Walls stop them (water doesn't), they fizzle at the point they
+// were aimed at, and a hit costs the player a heart. Movement dodges them since they
+// don't home.
 function stepEnemyProjectiles(now) {
   if (!state.enemyProjectiles.length) return;
   const pc = playerCenterPxAt(now);
@@ -1432,7 +1446,7 @@ function stepEnemyProjectiles(now) {
     const tx = Math.floor(p.px / TILE_SIZE), ty = Math.floor(p.py / TILE_SIZE);
     if (tx < 0 || tx >= MAP_COLS || ty < 0 || ty >= MAP_ROWS) continue;
     if (cellBlocksProjectile(tx, ty)) continue;
-    if (p.traveled >= NECRO_PROJECTILE_RANGE * TILE_SIZE) continue;
+    if (p.traveled >= p.maxTravel) continue;
     if (!state.player.dying) {
       const dx = p.px - pc.x, dy = p.py - pc.y;
       if (dx * dx + dy * dy <= hitR2) { damagePlayer(now, p.damage); continue; }
@@ -1442,16 +1456,42 @@ function stepEnemyProjectiles(now) {
   state.enemyProjectiles = remaining;
 }
 
+// Orb sprites, punched up once per sheet (a brightness lift and much higher alpha) so
+// they read as bright orbs instead of a faded haze.
+const orbSprites = {};
+function orbSprite(name) {
+  if (orbSprites[name]) return orbSprites[name];
+  const img = sprites[name];
+  if (!img) return null;
+  const c = document.createElement("canvas");
+  c.width = img.width; c.height = img.height;
+  const g = c.getContext("2d");
+  g.drawImage(img, 0, 0);
+  const d = g.getImageData(0, 0, c.width, c.height);
+  const a = d.data;
+  for (let i = 0; i < a.length; i += 4) {
+    a[i] = Math.min(255, Math.round(a[i] * 1.15));
+    a[i + 1] = Math.min(255, Math.round(a[i + 1] * 1.15));
+    a[i + 2] = Math.min(255, Math.round(a[i + 2] * 1.15));
+    a[i + 3] = Math.min(255, Math.round(a[i + 3] * 1.45));
+  }
+  g.putImageData(d, 0, 0);
+  orbSprites[name] = c;
+  return c;
+}
+
 function renderEnemyProjectiles() {
   if (!state.enemyProjectiles.length) return;
   ctx.imageSmoothingEnabled = true;
   for (const p of state.enemyProjectiles) {
-    const img = sprites[p.sprite];
+    const img = orbSprite(p.sprite);
     ctx.save();
     ctx.translate(p.px, p.py);
     ctx.rotate(p.angle);
-    if (img) ctx.drawImage(img, -img.width / 2, -img.height / 2);
-    else { ctx.fillStyle = "#8fd3ff"; ctx.beginPath(); ctx.arc(0, 0, 9, 0, Math.PI * 2); ctx.fill(); }
+    if (img) {
+      const w = img.width * NECRO_PROJECTILE_SCALE, h = img.height * NECRO_PROJECTILE_SCALE;
+      ctx.drawImage(img, -w / 2, -h / 2, w, h);
+    } else { ctx.fillStyle = "#8fd3ff"; ctx.beginPath(); ctx.arc(0, 0, 7, 0, Math.PI * 2); ctx.fill(); }
     ctx.restore();
   }
 }
@@ -1611,11 +1651,12 @@ function renderDamageVignette(now) {
 }
 
 // ---------------------------------------------------------------------------
-// Level transition (level 1 -> level 2): the screen pixelates to black over 4s,
-// then level 2 pixelates in over another 4s. Gameplay is frozen for the whole 8s,
-// and the cave is generated during the fade-out so the wait is hidden.
+// Level transition (between any two levels in the loop): the screen pixelates to
+// black over 3s, then the next level pixelates in over another 3s. Gameplay is
+// frozen for the whole 6s, and the next map is generated during the fade-out so
+// the wait is hidden.
 // ---------------------------------------------------------------------------
-const TRANSITION_MS = 4000;
+const TRANSITION_MS = 3000;
 let transition = null; // { phase: "out" | "in", startAt, snap }
 const pixelScratch = document.createElement("canvas");
 
@@ -1959,12 +2000,23 @@ document.addEventListener("visibilitychange", () => {
 });
 window.addEventListener("blur", autoPauseOnLeave);
 
-refreshLeaderboard();
 buildStatBoxes();
 showRangerHud();
 
-loadSprites().then(() => {
+// First-load gate: the menu sits behind the LOADING screen until the sprites and the
+// leaderboard have both landed, and for at least 2 seconds so a fast load doesn't
+// flash it. A failed leaderboard fetch still resolves (it renders the empty skeleton),
+// so the gate can't hang on a dead API.
+const LOADING_MIN_MS = 2000;
+const loadingStart = performance.now();
+const spritesLoaded = loadSprites().then(() => {
   spritesReady = true; // triggers a level 1 rebake with the real sprites
   render(performance.now());
-  startCharPreviewLoop();
+});
+Promise.allSettled([spritesLoaded, refreshLeaderboard()]).then(() => {
+  const wait = Math.max(0, LOADING_MIN_MS - (performance.now() - loadingStart));
+  setTimeout(() => {
+    overlay.classList.remove("loading");
+    startCharPreviewLoop();
+  }, wait);
 });

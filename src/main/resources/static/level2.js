@@ -168,7 +168,13 @@ function placePools(tLo, tHi, reserved, others, rxR, ryR, minSize) {
     if (blocked(blob)) continue;
     for (const key of blob) out.add(key);
   }
-  return fillHoles(out);
+  // Hole filling must honor the reservations too. Today a reserved cell can't sit in a
+  // hole (routes run 4-connected from the pool-free outer ring to the center, so the
+  // exterior flood always reaches them), but that is an accident of the walker's
+  // orthogonal steps. Keep the guarantee local so it survives a future diagonal step.
+  const filled = fillHoles(out);
+  for (const key of filled) if (!out.has(key) && reserved.has(key)) filled.delete(key);
+  return filled;
 }
 
 // A short (2-4 tile) one-wide offshoot grown off an existing path tile into open

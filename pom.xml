@@ -35,7 +35,7 @@
             <artifactId>spring-boot-starter-validation</artifactId>
         </dependency>
 
-        <!-- Flyway owns the prod (Postgres) schema; dev H2 uses Hibernate ddl-auto. -->
+        <!-- Flyway owns the prod (Postgres) schema. Dev H2 uses Hibernate ddl-auto. -->
         <dependency>
             <groupId>org.flywaydb</groupId>
             <artifactId>flyway-core</artifactId>

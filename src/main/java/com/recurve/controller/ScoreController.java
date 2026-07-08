@@ -95,23 +95,23 @@ public class ScoreController {
         return ResponseEntity.badRequest().body(Map.of("message", "Score rejected"));
     }
 
-    // Loose whitelist. Real names in any language pass. What gets rejected are the
-    // characters that render as nothing or reorder text (bidi controls, zero-width
-    // joiners, BOM, variation selectors, tag characters) plus ordinary control
-    // characters, since any of those can blank or spoof a leaderboard row. Iterates
-    // by code point because tag characters and the variation selectors supplement
-    // sit outside the BMP.
+    // Blocklist by Unicode category plus the known stragglers. Real names in any
+    // language pass. Rejected are the characters that render as nothing or reorder
+    // text, since any of those can blank or spoof a leaderboard row: every format
+    // character (bidi controls and marks, zero-widths, soft hyphen, BOM, tag
+    // characters), line and paragraph separators, variation selectors, the Hangul
+    // filler letters that render as blank glyphs, and ordinary control characters.
+    // Iterates by code point because several of these sit outside the BMP.
     private static boolean containsInvisible(String name) {
         for (int i = 0; i < name.length(); ) {
             int cp = name.codePointAt(i);
             if (Character.isISOControl(cp)) return true;
-            if (cp >= 0x202A && cp <= 0x202E) return true;   // bidi embeddings and overrides
-            if (cp >= 0x2066 && cp <= 0x2069) return true;   // bidi isolates
-            if (cp >= 0x200B && cp <= 0x200D) return true;   // zero-width space and joiners
-            if (cp == 0x2060 || cp == 0xFEFF) return true;   // word joiner and BOM
+            int type = Character.getType(cp);
+            if (type == Character.FORMAT) return true;       // Cf: bidi, zero-widths, soft hyphen, BOM, tags
+            if (type == Character.LINE_SEPARATOR || type == Character.PARAGRAPH_SEPARATOR) return true;
             if (cp >= 0xFE00 && cp <= 0xFE0F) return true;   // variation selectors
-            if (cp >= 0xE0000 && cp <= 0xE007F) return true; // tag characters
             if (cp >= 0xE0100 && cp <= 0xE01EF) return true; // variation selectors supplement
+            if (cp == 0x115F || cp == 0x1160 || cp == 0x3164 || cp == 0xFFA0) return true; // hangul fillers
             i += Character.charCount(cp);
         }
         return false;

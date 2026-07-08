@@ -77,14 +77,19 @@ export function resetScoreForm(show) {
   submitScoreButton.textContent = "Submit score";
 }
 
+// One submission at a time. Enter can fire faster than the network round-trip, and a
+// second POST would burn on the consumed session and clobber the "Submitted" state.
+let submitInFlight = false;
+
 async function submitScore(kills) {
-  if (scoreAlreadySubmitted) return;
+  if (scoreAlreadySubmitted || submitInFlight) return;
   const name = (playerNameInput.value || "").trim();
   // No name, silently do nothing. The player can still hit Start.
   if (!name) return;
   try {
     localStorage.setItem("recurve.playerName", name);
   } catch (_) {}
+  submitInFlight = true;
   submitScoreButton.disabled = true;
   submitScoreButton.textContent = "Submitting…";
   try {
@@ -117,6 +122,8 @@ async function submitScore(kills) {
     console.warn("Score submit failed:", err);
     submitScoreButton.disabled = false;
     submitScoreButton.textContent = "Submit score";
+  } finally {
+    submitInFlight = false;
   }
 }
 

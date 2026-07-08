@@ -17,8 +17,9 @@ import { buildFlowField, nextStepFromField } from "../../main/resources/static/p
 
 const idx = (x, y) => y * MAP_COLS + x;
 
-// All-grass interior with a mountain border. No obstacles, so BFS distance from a
-// tile equals its Manhattan distance to the goal (away from the spawn forts).
+// All-grass interior with a mountain border. No obstacles, so the field distance to an
+// on-axis tile equals its step count to the goal (the sweep is 8-directional and
+// weighted, so off-axis tiles cost sqrt(2) per diagonal instead).
 function openMap() {
   const map = [];
   for (let y = 0; y < MAP_ROWS; y++) {
