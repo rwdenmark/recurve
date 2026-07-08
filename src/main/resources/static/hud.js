@@ -5,6 +5,8 @@
 const killEl = document.getElementById("kill-count");
 const timeEl = document.getElementById("time-value");
 const heartsEl = document.getElementById("hearts");
+const xpFillEl = document.getElementById("xp-fill");
+const ultCirclesEl = document.getElementById("ult-circles");
 
 let renderedLives = "";
 
@@ -45,3 +47,40 @@ export function updateHud(now, state) {
   }
   renderHearts(state);
 }
+
+let lastXpPct = -1;
+let lastUltSig = "";
+
+// XP bar (kills toward the next upgrade card) plus the ultimate cooldown dial(s). `circles` is
+// an array of { fraction (0..1 clockwise fill), ready }; the crossbow ranger shows one dial per
+// turret slot, the other rangers show a single dial. Only touches the DOM when values change.
+export function updateProgress(cardFraction, circles) {
+  const pct = Math.round(Math.max(0, Math.min(1, cardFraction)) * 1000) / 10;
+  if (pct !== lastXpPct) {
+    lastXpPct = pct;
+    if (xpFillEl) xpFillEl.style.width = pct + "%";
+  }
+  if (!ultCirclesEl) return;
+  const list = circles && circles.length ? circles : [{ fraction: 1, ready: true }];
+  const sig = list
+    .map((c) => (c.ready ? "R" : Math.round(Math.max(0, Math.min(1, c.fraction)) * 100)))
+    .join("|");
+  if (sig === lastUltSig) return;
+  lastUltSig = sig;
+  while (ultCirclesEl.children.length < list.length) {
+    const el = document.createElement("span");
+    el.className = "ult-circle";
+    ultCirclesEl.appendChild(el);
+  }
+  while (ultCirclesEl.children.length > list.length) ultCirclesEl.removeChild(ultCirclesEl.lastChild);
+  for (let i = 0; i < list.length; i++) {
+    const el = ultCirclesEl.children[i];
+    const c = list[i];
+    const deg = Math.round(Math.max(0, Math.min(1, c.fraction)) * 360);
+    el.style.background = `conic-gradient(var(--accent) ${deg}deg, #23252b ${deg}deg)`;
+    el.classList.toggle("ready", !!c.ready);
+  }
+}
+
+// Start on the menu showing a single ready dial and an empty XP bar.
+updateProgress(0, [{ fraction: 1, ready: true }]);

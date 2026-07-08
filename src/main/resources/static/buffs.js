@@ -29,6 +29,11 @@ export let omniLevel = 0;              // omni-shot tier: 0 = not taken, 1-3 = a
 export let playerPierce = 0;            // extra enemies an arrow passes through
 export let playerArrowRange = ARROW_MAX_RANGE;
 export let buffsAwarded = 0;
+// Ranger-specific ultimate upgrades (only offered to the matching ranger).
+export let invisBonusSec = 0;      // gray: extra seconds of invisibility (cap 3)
+export let ballistaBonus = 0;      // crossbow: extra ballista slots (cap 2, so 3 total)
+export let ballistaFastCd = false; // crossbow: turret cooldown lowered to 20s
+export let burstBonusTiles = 0;    // green: extra tiles of arrow-burst range (cap 3)
 
 // ---------------------------------------------------------------------------
 // Upgrade cards: every KILLS_PER_CARD_FIRST_CYCLE kills through the first cycle,
@@ -67,11 +72,24 @@ const BUFF_CARDS = [
   // automatic 8-direction volley fire faster (the omni timer lives in game.js).
   { title: "Omni-Shot", stacking: true, cap: 3, dots: 3, available: () => playerMultiShot,
     apply: () => { omniLevel += 1; } },
+  // --- Ranger-specific ultimate upgrades. `ranger` restricts the card to one ranger index
+  // (0 = gray/invisibility, 1 = crossbow/ballista, 2 = green/arrow-burst). ---
+  { title: "Invisibility", stacking: true, cap: 3, dots: 3, ranger: 0, available: () => true,
+    apply: () => { invisBonusSec += 1; } },
+  { title: "Ballista", stacking: true, cap: 2, dots: 2, ranger: 1, available: () => true,
+    apply: () => { ballistaBonus += 1; } },
+  // Unlocked only once both Extra Ballista cards are taken; drops the cooldown to 20s.
+  { title: "Faster Ballista", ranger: 1, available: () => ballistaBonus >= 2 && !ballistaFastCd,
+    apply: () => { ballistaFastCd = true; } },
+  { title: "Arrow Storm", stacking: true, cap: 3, dots: 3, ranger: 2, available: () => true,
+    apply: () => { burstBonusTiles += 1; } },
 ];
 
-function pickBuffCards(n, s) {
-  // Stacking buffs drop out of the pool once they reach STACK_CAP copies.
+function pickBuffCards(n, s, ranger) {
+  // Stacking buffs drop out of the pool once they reach their cap. Ranger-specific cards only
+  // show for the matching ranger.
   const pool = BUFF_CARDS.filter((c) =>
+    (c.ranger === undefined || c.ranger === ranger) &&
     c.available(s) && !(c.stacking && (c.taken || 0) >= (c.cap || STACK_CAP)));
   // Heal to Full is a bonus, never filler. Once every other upgrade is taken or maxed,
   // drop it so a fully upgraded run stops getting card screens (and heals) and can reach
@@ -93,7 +111,7 @@ let activeGame = null;   // the game handle for the current selection screen
 // on purpose, so fire or movement held across the card screen resumes seamlessly.
 export function startBuffSelection(now, game) {
   buffsAwarded += 1; // count the award (advances the next threshold) even if nothing is offered
-  const cards = pickBuffCards(3, game.state);
+  const cards = pickBuffCards(3, game.state, game.ranger);
   if (cards.length === 0) return; // everything maxed out: skip the pause, keep playing
   game.state.choosingBuff = true;
   buffPausedAt = now;
@@ -174,6 +192,10 @@ export function resetRunStats(ranger) {
   playerPierce = 0;
   playerArrowRange = ARROW_MAX_RANGE;
   buffsAwarded = 0;
+  invisBonusSec = 0;
+  ballistaBonus = 0;
+  ballistaFastCd = false;
+  burstBonusTiles = 0;
   for (const c of BUFF_CARDS) c.taken = 0;
 }
 
@@ -190,6 +212,10 @@ export function applyMaxBuffs(state) {
   playerMultiShot = true;
   omniLevel = 3;         // Omni-Shot cap
   buffsAwarded = 6;      // unlock every enemy tier from the start
+  invisBonusSec = 3;
+  ballistaBonus = 2;
+  ballistaFastCd = true;
+  burstBonusTiles = 3;
   state.maxLives += STACK;
   state.lives = state.maxLives;
   for (const c of BUFF_CARDS) c.taken = c.cap || STACK; // show as maxed, drop them from the pool

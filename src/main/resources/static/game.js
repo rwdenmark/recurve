@@ -14,11 +14,12 @@ import {
   musicMode, playMenuMusic, playGameMusic, pauseMusic, resumeMusic,
   playSfx, ensureAudioCtx, loadSfx,
 } from "./audio.js";
-import { renderHearts, updateHud } from "./hud.js";
+import { renderHearts, updateHud, updateProgress } from "./hud.js";
 import {
   DEFAULT_HEALTH, DEFAULT_DAMAGE, DEFAULT_ATTACK_INTERVAL_MS, DEFAULT_MOVE_DURATION_MS,
   playerDamage, playerSpeedMult, fireRateMult, playerMultiShot, omniLevel,
   playerPierce, playerArrowRange, buffsAwarded,
+  invisBonusSec, ballistaBonus, ballistaFastCd, burstBonusTiles,
   KILLS_PER_CARD_FIRST_CYCLE, startBuffSelection, resetRunStats, applyMaxBuffs,
 } from "./buffs.js";
 import {
@@ -44,6 +45,9 @@ const SPRITE_PATHS = {
   knight3: "level_one/knight3_anim.png",
   arrow:  "level_one/arrow.png",
   spawnCastle: "level_one/spawn_castle.png",
+  // Crossbow ranger's ballista turret. 5x4 sheet of 64px frames; only the first column
+  // (a 4-frame fire cycle pointing "up") is used, rotated toward the target at draw time.
+  dwarvenBallista: "level_one/dwarven_ballista.png",
   grass: "level_one/grass.png",
   path:  "level_one/path.png",
   water: "level_one/water.png",
@@ -209,6 +213,23 @@ const NECRO_PROJECTILE_RANGE = 9;         // cap in tiles on how far an orb can 
 const NECRO_PROJECTILE_SCALE = 0.8;       // orbs draw 20% smaller than their source art
 const SUMMON_FADE_MS = 500;               // a summoned skeleton fades in over this
 
+// --- Ultimate abilities (Space to activate; one per ranger) ---
+const ULT_COOLDOWN_MS = 30000;          // default cooldown (gray invisibility, crossbow turret)
+const ARROW_STORM_COOLDOWN_MS = 20000;  // green ranger's arrow storm
+const BALLISTA_FAST_COOLDOWN_MS = 20000; // crossbow's reduced cooldown once the card is taken
+const BALLISTA_STAT_MULT = 0.75;        // turret runs at 75% of the ranger's live stats
+const BALLISTA_MIN_HP = 3;              // turret health floor; only scales past this as the ranger's hearts grow
+const INVIS_DURATION_MS = 5000;         // gray ranger's base invisibility (+1s per upgrade card)
+const INVIS_ENEMY_SPEED_MULT = 0.25;    // enemies wander at 25% speed while invisibility is up
+const BURST_RANGE_TILES = 4;            // green ranger's base burst reach (+1 tile per card)
+const MAX_BALLISTAS = 3;                // crossbow: turret slot cap (1 base + 2 cards)
+// Ballista turret art: only the first column of the sheet is used, a 4-frame fire cycle whose
+// art points "up", rotated toward the target at draw time.
+const BALLISTA_FRAME = 64;              // source frame size in dwarven_ballista.png
+const BALLISTA_FIRE_FRAMES = 4;         // frames in the first column
+const BALLISTA_DRAW = 32;               // drawn 32x32, centered on its 48px tile
+const BALLISTA_FIRE_ANIM_MS = 55;       // per-frame time while a shot plays
+
 const PLAYER_MOVE_DURATION_MS = DEFAULT_MOVE_DURATION_MS;
 const PATH_SPEED_MULT  = 1.15;  // path tiles run faster
 const GRASS_SPEED_MULT = 0.85;  // grass slower
@@ -351,10 +372,17 @@ const overlayScaleEl = document.querySelector(".overlay-scale");
 let renderScale = 1; // buffer pixels per world pixel
 function fitApp() {
   if (!stageEl || !playAreaEl) return;
-  const cs = getComputedStyle(stageEl);
-  const availW = stageEl.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
-  const availH = stageEl.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
-  const s = Math.min(availW / WORLD_W, availH / WORLD_H);
+  const measure = () => {
+    const cs = getComputedStyle(stageEl);
+    const availW = stageEl.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    const availH = stageEl.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+    return Math.min(availW / WORLD_W, availH / WORLD_H);
+  };
+  // Scale the top and bottom HUD bars proportionally with the game via the --ui-scale CSS
+  // zoom, then re-measure so the canvas fills the vertical space the smaller bars free up.
+  const uiScale = Math.max(0.5, Math.min(1, measure()));
+  document.documentElement.style.setProperty("--ui-scale", String(uiScale));
+  const s = measure();
   const dispW = Math.round(WORLD_W * s), dispH = Math.round(WORLD_H * s);
   playAreaEl.style.width = dispW + "px";
   playAreaEl.style.height = dispH + "px";
@@ -365,7 +393,6 @@ function fitApp() {
   canvas.style.height = dispH + "px";
   if (canvas.width !== bw || canvas.height !== bh) { canvas.width = bw; canvas.height = bh; }
   renderScale = bw / WORLD_W;
-  playAreaEl.style.visibility = "visible"; // sized now, safe to show (CSS hides it pre-fit)
 }
 // Resizing the buffer clears it, and the loop only paints during live play, so a resize
 // must repaint whatever static frame is on screen. Re-rendering with the timestamp of
@@ -585,6 +612,16 @@ let playerAttackUntil = 0;
 let playerHurtUntil = 0;
 let lastArrowFiredAt = -DEFAULT_ATTACK_INTERVAL_MS; // far in the past = ready to fire
 let lastOmniFireAt = 0;
+// Ultimate ability state (Space). ultReadyAt drives the gray + green cooldown; the crossbow's
+// turrets run their own lifecycle (up to MAX_BALLISTAS slots, each recharging one at a time).
+let ultReadyAt = 0;                 // gray/green: time the ultimate comes off cooldown
+let ultCastAt = -ULT_COOLDOWN_MS;   // time the current gray/green cooldown started
+let invisUntil = 0;                 // gray: invisibility is active until this time
+let ballistas = [];                 // crossbow: the deployed turrets
+let ballistaCharging = 0;           // crossbow: dead turret slots waiting to recharge
+let ballistaChargeEnd = 0;          // crossbow: time the current recharge finishes (0 = none)
+let stormCharging = 0;              // green: arrow-storm charges currently recharging
+let stormChargeEnd = 0;             // green: time the current storm charge finishes (0 = none)
 // A shot triggered but whose arrow hasn't left the bow yet.
 let pendingShot = null;
 
@@ -623,6 +660,13 @@ function onKeyDown(event) {
   if (event.repeat) { event.preventDefault(); return; }
 
   if (!state.running || state.paused) return;
+
+  // Space fires the selected ranger's ultimate.
+  if (event.code === "Space") {
+    activateUltimate(performance.now());
+    event.preventDefault();
+    return;
+  }
 
   if (MOVE_KEYS[event.code]) {
     heldMoveKeys.add(MOVE_KEYS[event.code]);
@@ -707,6 +751,12 @@ function shiftTimers(delta) {
   invulnUntil += delta;
   lastArrowFiredAt += delta;
   lastOmniFireAt += delta;
+  ultReadyAt += delta;
+  ultCastAt += delta;
+  invisUntil += delta;
+  if (ballistaChargeEnd !== 0) ballistaChargeEnd += delta;
+  if (stormChargeEnd !== 0) stormChargeEnd += delta;
+  for (const b of ballistas) { b.lastFireAt += delta; b.fireStart += delta; }
   if (pendingShot) pendingShot.releaseAt += delta;
   for (const e of state.enemies) {
     e.moveStartAt += delta;
@@ -766,6 +816,7 @@ const buffGame = {
   state,
   shiftTimers,
   resume: () => requestAnimationFrame(loop),
+  get ranger() { return selectedRanger; }, // buffs.js filters ranger-specific cards on this
 };
 
 // Start a tile step from the held WASD keys. Never interrupts a step in progress.
@@ -900,10 +951,297 @@ function stepProjectiles(now) {
     const ty = Math.floor(p.py / TILE_SIZE);
     if (tx < 0 || tx >= MAP_COLS || ty < 0 || ty >= MAP_ROWS) continue;
     if (cellBlocksProjectile(tx, ty)) continue;
-    if (p.traveled >= playerArrowRange * TILE_SIZE) continue;
+    if (p.traveled >= (p.range ?? playerArrowRange) * TILE_SIZE) continue;
     remaining.push(p);
   }
   state.projectiles = remaining;
+}
+
+// ---------------------------------------------------------------------------
+// Ultimate abilities (Space). One per ranger: gray = invisibility, crossbow = ballista
+// turrets, green = an arrow burst. Ranger-specific upgrade cards (buffs.js) scale each.
+// ---------------------------------------------------------------------------
+
+const INVIS_MAX_BONUS_SEC = 3;
+const BURST_MAX_BONUS_TILES = 3;
+function invisDurationMs() { return INVIS_DURATION_MS + Math.min(INVIS_MAX_BONUS_SEC, invisBonusSec) * 1000; }
+function burstRangeTiles() { return BURST_RANGE_TILES + Math.min(BURST_MAX_BONUS_TILES, burstBonusTiles); }
+function arrowStormCharges() { return Math.min(3, Math.max(1, burstBonusTiles)); }
+function stormReadyCharges() { return arrowStormCharges() - stormCharging; }
+function ballistaSlots() { return Math.min(MAX_BALLISTAS, 1 + ballistaBonus); }
+function ballistaCooldownMs() { return ballistaFastCd ? BALLISTA_FAST_COOLDOWN_MS : ULT_COOLDOWN_MS; }
+// Slots free to deploy right now: total slots minus the live turrets and those recharging.
+function readyBallistaSlots() { return ballistaSlots() - ballistas.length - ballistaCharging; }
+
+function ultimateReady(now) {
+  if (selectedRanger === 1) return readyBallistaSlots() > 0; // crossbow: any free slot
+  if (selectedRanger === 2) return stormReadyCharges() > 0;  // green: any ready charge
+  return now >= ultReadyAt;
+}
+
+// The HUD dial(s) for the active ranger. Gray/green return one circle; the crossbow returns
+// one per slot: full = ready, partial = the single recharging slot, empty = deployed/queued.
+function ultimateCircles(now) {
+  if (selectedRanger === 1) {
+    const slots = ballistaSlots();
+    const ready = Math.max(0, readyBallistaSlots());
+    const cd = ballistaCooldownMs();
+    const circles = [];
+    for (let i = 0; i < ready; i++) circles.push({ fraction: 1, ready: true });
+    if (ballistaCharging > 0) {
+      circles.push({ fraction: Math.max(0, Math.min(1, 1 - (ballistaChargeEnd - now) / cd)), ready: false });
+      for (let i = 1; i < ballistaCharging; i++) circles.push({ fraction: 0, ready: false });
+    }
+    while (circles.length < slots) circles.push({ fraction: 0, ready: false }); // deployed slots
+    return circles.slice(0, slots);
+  }
+  if (selectedRanger === 2) {
+    const total = arrowStormCharges();
+    const ready = Math.max(0, stormReadyCharges());
+    const circles = [];
+    for (let i = 0; i < ready; i++) circles.push({ fraction: 1, ready: true });
+    if (stormCharging > 0) {
+      circles.push({ fraction: Math.max(0, Math.min(1, 1 - (stormChargeEnd - now) / ARROW_STORM_COOLDOWN_MS)), ready: false });
+      for (let i = 1; i < stormCharging; i++) circles.push({ fraction: 0, ready: false });
+    }
+    return circles.slice(0, total);
+  }
+  const active = now < invisUntil; // gray
+  if (now >= ultReadyAt) return [{ fraction: 1, ready: true, active }];
+  return [{ fraction: 1 - (ultReadyAt - now) / ULT_COOLDOWN_MS, ready: false, active }];
+}
+
+function activateUltimate(now) {
+  if (!state.running || state.paused || state.choosingBuff || state.transitioning || state.player.dying) return;
+  if (!ultimateReady(now)) return;
+  if (selectedRanger === 0) activateInvisibility(now);
+  else if (selectedRanger === 1) deployBallista(now);
+  else activateArrowBurst(now);
+}
+
+// Gray ranger: vanish for 5s (+1s per card). Enemies stop pathing and wander (stepEnemies),
+// the ranger takes no damage and phases through enemies, and renders at half opacity.
+function activateInvisibility(now) {
+  invisUntil = now + invisDurationMs();
+  ultCastAt = now;
+  ultReadyAt = now + ULT_COOLDOWN_MS;
+  for (const e of state.enemies) { e.attacking = false; e.summoning = false; } // nothing lands as you vanish
+}
+
+// Crossbow ranger: drop a turret. It runs at 75% of the ranger's live upgraded stats and takes
+// no i-frames, so several enemies landing together can cleave it. Its slot only starts
+// recharging when it dies. Turrets never stack: an occupied tile picks the nearest free one.
+function deployBallista(now) {
+  if (readyBallistaSlots() <= 0) return;
+  const spot = findBallistaTile(playerTile());
+  if (!spot) return;
+  const hp = Math.max(BALLISTA_MIN_HP, Math.round(BALLISTA_STAT_MULT * state.maxLives)); // 75% of hearts, floor 3
+  ballistas.push({ x: spot.x, y: spot.y, hp, maxHp: hp, angle: -Math.PI / 2, lastFireAt: -1e9, firing: false, fireStart: 0 });
+  invalidateBallistaFields();
+}
+
+function isFreeForBallista(x, y) {
+  if (x < 0 || x >= MAP_COLS || y < 0 || y >= MAP_ROWS) return false;
+  if (cellSolid(x, y)) return false;
+  for (const b of ballistas) if (b.x === x && b.y === y) return false;
+  return true;
+}
+// The player's tile if free, otherwise the nearest free tile spiralling outward.
+function findBallistaTile(t) {
+  if (isFreeForBallista(t.x, t.y)) return { x: t.x, y: t.y };
+  for (let r = 1; r < Math.max(MAP_COLS, MAP_ROWS); r++) {
+    let best = null, bestD = Infinity;
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue; // ring at Chebyshev radius r
+        const nx = t.x + dx, ny = t.y + dy;
+        if (!isFreeForBallista(nx, ny)) continue;
+        const d = dx * dx + dy * dy;
+        if (d < bestD) { bestD = d; best = { x: nx, y: ny }; }
+      }
+    }
+    if (best) return best;
+  }
+  return null;
+}
+
+// Green ranger: one arrow to every living enemy within range it can see, for the ranger's
+// current damage. A single bow twang plays for the whole volley.
+function activateArrowBurst(now) {
+  if (stormReadyCharges() <= 0) return;
+  stormCharging += 1;                                                        // this charge starts recharging
+  if (stormChargeEnd === 0) stormChargeEnd = now + ARROW_STORM_COOLDOWN_MS;  // one recharges at a time
+  const reach = burstRangeTiles();
+  const t = playerTile();
+  const px = (t.x + 0.5) * TILE_SIZE, py = (t.y + 0.5) * TILE_SIZE;
+  for (const enemy of state.enemies) {
+    if (enemy.dying) continue;
+    if (Math.hypot(enemy.x - t.x, enemy.y - t.y) > reach) continue;
+    if (!hasLineOfSight(t.x, t.y, enemy.x, enemy.y)) continue;
+    const c = enemyCenterPx(enemy, now);
+    const ang = Math.atan2(c.y - py, c.x - px);
+    // A visual-only arrow (skipped by resolveCollisions) plus a direct, guaranteed hit.
+    state.projectiles.push({
+      px, py, vx: Math.cos(ang) * ARROW_SPEED, vy: Math.sin(ang) * ARROW_SPEED,
+      angle: ang, traveled: 0, lastStepAt: now, hitEnemies: new Set(), visual: true,
+    });
+    damageEnemy(enemy, now);
+  }
+  playSfx("bow", 10);
+}
+
+// True if no projectile-blocking tile sits between two tiles (endpoints excluded).
+function hasLineOfSight(x0, y0, x1, y1) {
+  const dx = Math.abs(x1 - x0), dy = Math.abs(y1 - y0);
+  const sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+  let err = dx - dy, x = x0, y = y0;
+  for (;;) {
+    if (!(x === x0 && y === y0) && !(x === x1 && y === y1) && cellBlocksProjectile(x, y)) return false;
+    if (x === x1 && y === y1) return true;
+    const e2 = 2 * err;
+    if (e2 > -dy) { err -= dy; x += sx; }
+    if (e2 < dx) { err += dx; y += sy; }
+  }
+}
+
+// The turret nearest an enemy (by tile distance), or null when none are deployed.
+function nearestBallista(enemy) {
+  let best = null, bestD = Infinity;
+  for (const b of ballistas) {
+    const d = Math.hypot(enemy.x - b.x, enemy.y - b.y);
+    if (d < bestD) { bestD = d; best = b; }
+  }
+  return best ? { x: best.x, y: best.y, d: bestD } : null;
+}
+// What an enemy is going for: the player, or the nearest ballista when it is the closer of
+// the two. isBallista tells callers which one to damage.
+function enemyTarget(enemy) {
+  const p = playerTile();
+  const nb = nearestBallista(enemy);
+  if (!nb) return { x: p.x, y: p.y, isBallista: false };
+  const dP = Math.hypot(enemy.x - p.x, enemy.y - p.y);
+  return nb.d < dP ? { x: nb.x, y: nb.y, isBallista: true } : { x: p.x, y: p.y, isBallista: false };
+}
+
+// Wander step used by every enemy while the gray ranger is invisible: a random open neighbor
+// at 25% speed, no attacking.
+const WANDER_DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
+function wanderStep(enemy, now) {
+  const type = ALL_TYPES[enemy.type];
+  enemy.attacking = false; enemy.summoning = false;
+  if (enemy.moving) {
+    if (now - enemy.moveStartAt < enemy.moveDuration) return;
+    enemy.x = enemy.toX; enemy.y = enemy.toY; enemy.moving = false;
+  }
+  const floats = type.floats === true;
+  const solid = floats ? floaterSolid : cellSolid;
+  const dirs = WANDER_DIRS.slice();
+  shuffleInPlace(dirs);
+  for (const [dx, dy] of dirs) {
+    const nx = enemy.x + dx, ny = enemy.y + dy;
+    if (nx < 0 || nx >= MAP_COLS || ny < 0 || ny >= MAP_ROWS) continue;
+    if (solid(nx, ny)) continue;
+    if (dx !== 0 && dy !== 0 && (solid(enemy.x + dx, enemy.y) || solid(enemy.x, enemy.y + dy))) continue;
+    enemy.fromX = enemy.x; enemy.fromY = enemy.y; enemy.toX = nx; enemy.toY = ny;
+    if (nx > enemy.x) enemy.facing = "right"; else if (nx < enemy.x) enemy.facing = "left";
+    let dur = enemyStepDuration(enemy.type, nx, ny) / INVIS_ENEMY_SPEED_MULT;
+    if (dx !== 0 && dy !== 0) dur = Math.round(dur * DIAG_DURATION_FACTOR);
+    enemy.moveDuration = dur; enemy.moveStartAt = now; enemy.moving = true;
+    return;
+  }
+}
+
+// Step every turret: aim at the nearest visible enemy in range and fire 75%-stat arrows.
+function stepBallistas(now) {
+  if (!ballistas.length) return;
+  const range = playerArrowRange * BALLISTA_STAT_MULT;
+  for (const b of ballistas) {
+    let target = null, bestD = Infinity;
+    for (const e of state.enemies) {
+      if (e.dying) continue;
+      const d = Math.hypot(e.x - b.x, e.y - b.y);
+      if (d <= range && d < bestD && hasLineOfSight(b.x, b.y, e.x, e.y)) { bestD = d; target = e; }
+    }
+    if (!target) { b.firing = false; continue; }
+    const c = enemyCenterPx(target, now);
+    const bx = (b.x + 0.5) * TILE_SIZE, by = (b.y + 0.5) * TILE_SIZE;
+    b.angle = Math.atan2(c.y - by, c.x - bx);
+    if (now - b.lastFireAt >= DEFAULT_ATTACK_INTERVAL_MS / (fireRateMult * BALLISTA_STAT_MULT)) {
+      b.lastFireAt = now; b.firing = true; b.fireStart = now;
+      state.projectiles.push({
+        px: bx, py: by, vx: Math.cos(b.angle) * ARROW_SPEED, vy: Math.sin(b.angle) * ARROW_SPEED,
+        angle: b.angle, traveled: 0, lastStepAt: now, hitEnemies: new Set(),
+        dmg: playerDamage * BALLISTA_STAT_MULT, pierce: Math.floor(playerPierce * BALLISTA_STAT_MULT), range,
+      });
+      playSfx("bow", 10);
+    }
+    if (b.firing && now - b.fireStart >= BALLISTA_FIRE_FRAMES * BALLISTA_FIRE_ANIM_MS) b.firing = false;
+  }
+}
+
+// Advance the recharge queue: one dead slot recharges at a time, then the next begins.
+function stepBallistaCooldowns(now) {
+  if (ballistaChargeEnd !== 0 && now >= ballistaChargeEnd) {
+    ballistaCharging -= 1;
+    ballistaChargeEnd = ballistaCharging > 0 ? now + ballistaCooldownMs() : 0;
+  }
+}
+
+// Advance the green ranger's arrow-storm charge recharge (one charge at a time).
+function stepStormCooldowns(now) {
+  if (stormChargeEnd !== 0 && now >= stormChargeEnd) {
+    stormCharging -= 1;
+    stormChargeEnd = stormCharging > 0 ? now + ARROW_STORM_COOLDOWN_MS : 0;
+  }
+}
+
+function damageBallistaAt(bx, by, dmg, now) {
+  const b = ballistas.find((t) => t.x === bx && t.y === by);
+  if (!b) return;
+  b.hp -= dmg;
+  if (b.hp <= 0) killBallista(b, now);
+}
+function killBallista(b, now) {
+  const i = ballistas.indexOf(b);
+  if (i >= 0) ballistas.splice(i, 1);
+  ballistaCharging += 1;                                       // slot joins the recharge queue
+  if (ballistaChargeEnd === 0) ballistaChargeEnd = now + ballistaCooldownMs(); // one recharges at a time
+  invalidateBallistaFields();
+}
+
+// Per-turret grounded + floating flow fields, keyed by the turret's tile (turrets are static
+// and few, so a small cache is plenty). Cleared when the map changes or a turret set changes.
+let ballistaFields = new Map();
+let ballistaFloatFields = new Map();
+let ballistaFieldsMap = null;
+function invalidateBallistaFields() { ballistaFields.clear(); ballistaFloatFields.clear(); }
+function ballistaFieldsCheckMap() {
+  const mapRef = level === 3 ? l3Grid() : level === 2 ? l2Grid() : state.tileMap;
+  if (ballistaFieldsMap !== mapRef) { ballistaFields.clear(); ballistaFloatFields.clear(); ballistaFieldsMap = mapRef; }
+}
+function ballistaFieldAt(bx, by) {
+  ballistaFieldsCheckMap();
+  const key = bx + "," + by;
+  let f = ballistaFields.get(key);
+  if (!f) {
+    const cost = (x, y) => 1 / cellSpeedMult(x, y);
+    if (level === 3) f = buildFlowField(bx, by, null, (x, y) => l3Solid(x, y), cost);
+    else if (level === 2) f = buildFlowField(bx, by, null, (x, y) => l2Solid(x, y), cost);
+    else f = buildFlowField(bx, by, state.tileMap, null, cost);
+    ballistaFields.set(key, f);
+  }
+  return f;
+}
+function ballistaFloatFieldAt(bx, by) {
+  ballistaFieldsCheckMap();
+  const key = bx + "," + by;
+  let f = ballistaFloatFields.get(key);
+  if (!f) {
+    const cost = (x, y) => 1 / cellSpeedMult(x, y);
+    f = buildFlowField(bx, by, null, (x, y) => floaterSolid(x, y), cost);
+    ballistaFloatFields.set(key, f);
+  }
+  return f;
 }
 
 // ---------------------------------------------------------------------------
@@ -1019,20 +1357,31 @@ function stepEnemies(now) {
   if (state.player.dying) return; // freeze enemies once the player is dying
   const { x: goalX, y: goalY } = playerTile();
   const field = goalFlowField(goalX, goalY);
+  const invisible = now < invisUntil;
   for (const enemy of state.enemies) {
     if (enemy.dying) continue;
     const type = ALL_TYPES[enemy.type];
 
     if (now < enemy.hurtUntil) { enemy.moving = false; continue; }
 
+    // Gray ranger's invisibility: every enemy stops hunting and wanders at 25% speed.
+    if (invisible) { wanderStep(enemy, now); continue; }
+
     // Necromancers are ranged summoners with their own AI (no melee windup).
     if (type.kind === "necro") { stepNecro(enemy, now, goalX, goalY); continue; }
 
-    // Damage lands when the windup finishes, so the player can dodge out of range.
+    // Melee chasers pick the closer of the player and the nearest ballista as their target.
+    const tgt = enemyTarget(enemy);
+
+    // Damage lands when the windup finishes, so the target can dodge out of range.
     if (enemy.attacking) {
       if (now - enemy.attackStart >= type.attackWindupMs) {
         enemy.attacking = false;
-        if (enemyInAttackRange(enemy, goalX, goalY)) damagePlayer(now, type.damage);
+        if (enemy.attackTargetBallista) {
+          if (enemyInAttackRange(enemy, enemy.attackBX, enemy.attackBY)) damageBallistaAt(enemy.attackBX, enemy.attackBY, type.damage, now);
+        } else if (enemyInAttackRange(enemy, goalX, goalY)) {
+          damagePlayer(now, type.damage);
+        }
       }
       continue;
     }
@@ -1046,16 +1395,21 @@ function stepEnemies(now) {
       enemy.moving = false;
     }
 
-    if (enemyInAttackRange(enemy, goalX, goalY)) {
+    if (enemyInAttackRange(enemy, tgt.x, tgt.y)) {
       enemy.attacking = true;
       enemy.attackStart = now;
-      if (goalX > enemy.x) enemy.facing = "right";
-      else if (goalX < enemy.x) enemy.facing = "left";
+      enemy.attackTargetBallista = tgt.isBallista;
+      enemy.attackBX = tgt.x; enemy.attackBY = tgt.y;
+      if (tgt.x > enemy.x) enemy.facing = "right";
+      else if (tgt.x < enemy.x) enemy.facing = "left";
       continue;
     }
-    // Floating skeletons path over water, grounded enemies use the normal field.
+    // Floating skeletons path over water, grounded enemies use the normal field. Each uses the
+    // field for its chosen target (player or a specific ballista tile).
     const floats = type.floats === true;
-    const stepField = floats ? goalFlowFieldFloat(goalX, goalY) : field;
+    let stepField;
+    if (floats) stepField = tgt.isBallista ? ballistaFloatFieldAt(tgt.x, tgt.y) : goalFlowFieldFloat(goalX, goalY);
+    else stepField = tgt.isBallista ? ballistaFieldAt(tgt.x, tgt.y) : field;
     const solidTest = floats ? floaterSolid : cellSolid;
     const next = nextStepFromField(stepField, enemy.x, enemy.y, solidTest);
     if (next === null) continue;
@@ -1091,7 +1445,7 @@ function isEnemyAt(x, y) {
 // rocks or trees, which cellSolid still blocks). If the window ends while the ranger is
 // still stacked on an enemy, phasing persists until it reaches an enemy-free tile.
 function playerPhasing(now) {
-  if (now < invulnUntil) return true;
+  if (now < invulnUntil || now < invisUntil) return true;
   const t = playerTile();
   return isEnemyAt(t.x, t.y);
 }
@@ -1125,7 +1479,9 @@ function resolveCollisions(now) {
   }
   const surviving = [];
   for (const p of state.projectiles) {
+    if (p.visual) { surviving.push(p); continue; } // burst-effect arrows deal no collision damage
     let consumed = false;
+    const pierce = p.pierce ?? playerPierce;
     for (const e of live) {
       if (e.enemy.dying) continue; // killed by an earlier arrow this frame
       const dx = p.px - e.cx;
@@ -1133,8 +1489,8 @@ function resolveCollisions(now) {
       if (dx * dx + dy * dy > r2) continue;
       if (p.hitEnemies.has(e.enemy)) continue;
       p.hitEnemies.add(e.enemy);
-      damageEnemy(e.enemy, now);
-      if (p.hitEnemies.size > playerPierce) { consumed = true; break; }
+      damageEnemy(e.enemy, now, p.dmg ?? playerDamage);
+      if (p.hitEnemies.size > pierce) { consumed = true; break; }
     }
     if (!consumed) surviving.push(p);
   }
@@ -1144,8 +1500,8 @@ function resolveCollisions(now) {
 
 // Apply one arrow's damage. A fatal hit starts the death and counts the kill.
 // A non-fatal hit plays the flinch.
-function damageEnemy(enemy, now) {
-  enemy.hp -= playerDamage;
+function damageEnemy(enemy, now, dmg = playerDamage) {
+  enemy.hp -= dmg;
   if (enemy.hp <= 0) {
     // Freeze the death at the current (possibly mid-move) position so it doesn't
     // snap back to the tile it was leaving.
@@ -1167,7 +1523,7 @@ function damageEnemy(enemy, now) {
 function damagePlayer(now, dmg) {
   const p = state.player;
   if (p.dying) return;
-  if (now < invulnUntil) return; // ignore hits during the invulnerability window
+  if (now < invulnUntil || now < invisUntil) return; // ignore hits during i-frames or invisibility
   if (!GOD_MODE) state.lives = Math.max(0, state.lives - dmg); // god mode: hurt fx play but no life is lost
   playSfx("hurt");
   damageFlashUntil = now + DAMAGE_FLASH_MS;
@@ -1380,10 +1736,11 @@ function summonSkeleton(necro, ntype, now) {
 }
 
 // Fire a slow, non-homing orb toward where the player is right now (dodgeable).
-function spawnNecroProjectile(enemy, type, now) {
-  const t = playerTile();
+function spawnNecroProjectile(enemy, type, now, aimTile) {
+  const aimX = aimTile ? aimTile.x : playerTile().x;
+  const aimY = aimTile ? aimTile.y : playerTile().y;
   const ex = (enemy.x + 0.5) * TILE_SIZE, ey = (enemy.y + 0.5) * TILE_SIZE;
-  const tx = (t.x + 0.5) * TILE_SIZE, ty = (t.y + 0.5) * TILE_SIZE;
+  const tx = (aimX + 0.5) * TILE_SIZE, ty = (aimY + 0.5) * TILE_SIZE;
   const ang = Math.atan2(ty - ey, tx - ex);
   // The orb dies at the point it was aimed at, so standing on the aimed tile eats the
   // hit and stepping aside dodges it. The range cap still bounds a long shot.
@@ -1391,6 +1748,7 @@ function spawnNecroProjectile(enemy, type, now) {
   state.enemyProjectiles.push({
     px: ex, py: ey, vx: Math.cos(ang) * NECRO_PROJECTILE_SPEED, vy: Math.sin(ang) * NECRO_PROJECTILE_SPEED,
     angle: ang, traveled: 0, maxTravel, damage: type.damage, sprite: type.projectile, lastStepAt: now,
+    targetBallista: !!aimTile, bx: aimX, by: aimY,
   });
 }
 
@@ -1400,7 +1758,9 @@ function stepNecro(enemy, now, goalX, goalY) {
   if (enemy.summonedMinion && (enemy.summonedMinion.dying || !state.enemies.includes(enemy.summonedMinion))) {
     enemy.summonedMinion = null;
   }
-  if (goalX > enemy.x) enemy.facing = "right"; else if (goalX < enemy.x) enemy.facing = "left";
+  // Path to and cast at the closer of the player and the nearest ballista.
+  const tgt = enemyTarget(enemy);
+  if (tgt.x > enemy.x) enemy.facing = "right"; else if (tgt.x < enemy.x) enemy.facing = "left";
 
   // Finish an in-progress summon (never interrupted), release the skeleton mid-cast.
   if (enemy.summoning) {
@@ -1410,10 +1770,12 @@ function stepNecro(enemy, now, goalX, goalY) {
     if (now - enemy.summonStart >= NECRO_SUMMON_HOLD_MS) enemy.summoning = false;
     return;
   }
-  // Finish an in-progress attack (never interrupted), release the fireball mid-cast.
+  // Finish an in-progress attack (never interrupted), release the fireball mid-cast at the
+  // tile the cast locked onto (player or a ballista).
   if (enemy.attacking) {
     if (!enemy.projReleased && now - enemy.attackStart >= NECRO_PROJECTILE_RELEASE_MS) {
-      spawnNecroProjectile(enemy, type, now); enemy.projReleased = true;
+      spawnNecroProjectile(enemy, type, now, enemy.attackTargetBallista ? { x: enemy.attackBX, y: enemy.attackBY } : null);
+      enemy.projReleased = true;
     }
     if (now - enemy.attackStart >= NECRO_ATTACK_HOLD_MS) enemy.attacking = false;
     return;
@@ -1424,7 +1786,7 @@ function stepNecro(enemy, now, goalX, goalY) {
     if (now - enemy.moveStartAt < enemy.moveDuration) return;
     enemy.x = enemy.toX; enemy.y = enemy.toY; enemy.moving = false;
   }
-  const dist = tileDist(enemy.x, enemy.y, goalX, goalY);
+  const dist = tileDist(enemy.x, enemy.y, tgt.x, tgt.y);
   // Priority 1: summon (one minion at a time, 10s cooldown from the first summon, and
   // never past the live-enemy performance cap).
   const cooldownOk = enemy.lastSummonAt === null || now - enemy.lastSummonAt >= NECRO_SUMMON_COOLDOWN_MS;
@@ -1436,12 +1798,14 @@ function stepNecro(enemy, now, goalX, goalY) {
   if (dist <= NECRO_ATTACK_RANGE) {
     if (now - enemy.lastAttackAt >= NECRO_ATTACK_COOLDOWN_MS) {
       enemy.attacking = true; enemy.attackStart = now; enemy.projReleased = false;
+      enemy.attackTargetBallista = tgt.isBallista; enemy.attackBX = tgt.x; enemy.attackBY = tgt.y;
       enemy.lastAttackAt = now;
     }
     return;
   }
-  // Otherwise close the distance to attack range (grounded pathing).
-  const next = nextStepFromField(goalFlowField(goalX, goalY), enemy.x, enemy.y, cellSolid);
+  // Otherwise close the distance to attack range (grounded pathing toward the chosen target).
+  const nextField = tgt.isBallista ? ballistaFieldAt(tgt.x, tgt.y) : goalFlowField(goalX, goalY);
+  const next = nextStepFromField(nextField, enemy.x, enemy.y, cellSolid);
   if (next === null) return;
   enemy.fromX = enemy.x; enemy.fromY = enemy.y; enemy.toX = next.x; enemy.toY = next.y;
   if (next.x > enemy.x) enemy.facing = "right"; else if (next.x < enemy.x) enemy.facing = "left";
@@ -1465,7 +1829,11 @@ function stepEnemyProjectiles(now) {
     if (tx < 0 || tx >= MAP_COLS || ty < 0 || ty >= MAP_ROWS) continue;
     if (cellBlocksProjectile(tx, ty)) continue;
     if (p.traveled >= p.maxTravel) continue;
-    if (!state.player.dying) {
+    if (p.targetBallista) {
+      const bx = (p.bx + 0.5) * TILE_SIZE, by = (p.by + 0.5) * TILE_SIZE;
+      const dx = p.px - bx, dy = p.py - by;
+      if (dx * dx + dy * dy <= hitR2) { damageBallistaAt(p.bx, p.by, p.damage, now); continue; }
+    } else if (!state.player.dying) {
       const dx = p.px - pc.x, dy = p.py - pc.y;
       if (dx * dx + dy * dy <= hitR2) { damagePlayer(now, p.damage); continue; }
     }
@@ -1510,6 +1878,30 @@ function renderEnemyProjectiles() {
       const w = img.width * NECRO_PROJECTILE_SCALE, h = img.height * NECRO_PROJECTILE_SCALE;
       ctx.drawImage(img, -w / 2, -h / 2, w, h);
     } else { ctx.fillStyle = "#8fd3ff"; ctx.beginPath(); ctx.arc(0, 0, 7, 0, Math.PI * 2); ctx.fill(); }
+    ctx.restore();
+  }
+}
+
+// The ballista turrets: the first-column fire frame, drawn 32x32 and rotated to aim. The art
+// points up, so it is rotated by the aim angle plus 90 degrees.
+function renderBallistas(now) {
+  if (!ballistas.length) return;
+  const sheet = sprites.dwarvenBallista;
+  for (const b of ballistas) {
+    const cx = (b.x + 0.5) * TILE_SIZE, cy = (b.y + 0.5) * TILE_SIZE;
+    let frame = 0;
+    if (b.firing) frame = Math.min(BALLISTA_FIRE_FRAMES - 1, Math.floor((now - b.fireStart) / BALLISTA_FIRE_ANIM_MS));
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(b.angle + Math.PI / 2);
+    ctx.imageSmoothingEnabled = false;
+    if (sheet) {
+      ctx.drawImage(sheet, 0, frame * BALLISTA_FRAME, BALLISTA_FRAME, BALLISTA_FRAME,
+        -BALLISTA_DRAW / 2, -BALLISTA_DRAW / 2, BALLISTA_DRAW, BALLISTA_DRAW);
+    } else {
+      ctx.fillStyle = "#8a6a3a";
+      ctx.fillRect(-BALLISTA_DRAW / 2, -BALLISTA_DRAW / 2, BALLISTA_DRAW, BALLISTA_DRAW);
+    }
     ctx.restore();
   }
 }
@@ -1620,14 +2012,17 @@ function renderPlayer(now) {
   const atkSpeed = p.anim === "ATTACK" ? fireRateMult : 1;
   const frameIndex = animFrameIndex(p.animStart, now, p.anim, once, atkSpeed);
 
-  // Invulnerability blink: flicker the ranger on and off while the i-frames are active.
-  if (now < invulnUntil && Math.floor(now / 120) % 2 === 1) return;
+  // Invisibility (gray ultimate): steady half-opacity and no blink. Otherwise the i-frame blink.
+  const invisible = now < invisUntil;
+  if (!invisible && now < invulnUntil && Math.floor(now / 120) % 2 === 1) return;
+  if (invisible) { ctx.save(); ctx.globalAlpha = 0.5; }
 
   if (!drawAnim(playerCell(), p.anim, frameIndex, centerX, baseY, p.facing === "left")) {
     // Fallback if the sheet failed to load.
     ctx.fillStyle = "#7ed957";
     ctx.fillRect(centerX - 12, baseY - 28, 24, 28);
   }
+  if (invisible) ctx.restore();
 }
 
 // Timestamp of the last painted frame, so a resize repaint can reproduce it exactly
@@ -1649,6 +2044,7 @@ function render(now) {
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(level1Background(), 0, 0);
   }
+  renderBallistas(now);
   renderEnemies(now);
   renderPlayer(now);
   renderProjectiles(); // above the characters, so arrows never show through them
@@ -1750,6 +2146,16 @@ function enterLevel(n, now) {
   invulnUntil = 0;
   lastArrowFiredAt = -DEFAULT_ATTACK_INTERVAL_MS;
   lastOmniFireAt = now;   // omni volleys start fresh in the new level
+  // The turret vanishes and every ranger's ultimate cooldown resets on a new level.
+  ultReadyAt = 0;
+  ultCastAt = -ULT_COOLDOWN_MS;
+  invisUntil = 0;
+  ballistas = [];
+  ballistaCharging = 0;
+  ballistaChargeEnd = 0;
+  stormCharging = 0;
+  stormChargeEnd = 0;
+  invalidateBallistaFields();
   flowField = null;       // rebuild the flow field for the new map
   setupLevelMap(n);
   state.lastSpawnAt = now;
@@ -1803,10 +2209,14 @@ function loop(now) {
       releasePendingShot(now);
       maybeFireOmni(now);
       stepEnemies(now);
+      stepBallistas(now);
+      stepBallistaCooldowns(now);
+      stepStormCooldowns(now);
       resolveCollisions(now);
       stepEnemyProjectiles(now);
       render(now);
       updateHud(now, state);
+      updateProgress((state.kills - killCardBaseline) / killsPerCard(), ultimateCircles(now));
       if (state.kills - killCardBaseline >= killsPerCard()) {
         killCardBaseline = state.kills;
         startBuffSelection(now, buffGame);
@@ -1865,6 +2275,15 @@ function resetState() {
   lastOmniFireAt = 0;
   pendingShot = null;
   mouseDown = false;
+  ultReadyAt = 0;                    // ultimate starts ready
+  ultCastAt = -ULT_COOLDOWN_MS;
+  invisUntil = 0;
+  ballistas = [];
+  ballistaCharging = 0;
+  ballistaChargeEnd = 0;
+  stormCharging = 0;
+  stormChargeEnd = 0;
+  invalidateBallistaFields();
   resetRunStats(ranger);
   state.enemies = [];
   state.projectiles = [];
@@ -1880,6 +2299,7 @@ function gameOver() {
   resetScoreForm(true);
   overlay.classList.remove("hidden");
   refreshLeaderboard();
+  updateProgress(0, [{ fraction: 1, ready: true }]);
   startCharPreviewLoop(); // let them re-pick an archer before the next run
 }
 

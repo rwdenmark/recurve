@@ -4,6 +4,7 @@
   --text: #e8e8e8;
   --accent: #f5b942;
   --muted: #7d8088;
+  --ui-scale: 1;   /* set by game.js (fitApp) so the HUD bars scale with the game */
 }
 
 * {
@@ -18,6 +19,14 @@ html, body {
   color: var(--text);
   font-family: ui-monospace, "SFMono-Regular", Menlo, Monaco, monospace;
   font-size: 14px;
+  user-select: none;            /* nothing in the game is text-selectable ... */
+  -webkit-user-select: none;
+}
+/* ... except the name field, so the callsign stays editable/selectable. */
+input,
+textarea {
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 /* Pin the app to the viewport so nothing scrolls. The game scales to absorb the slack. */
@@ -33,9 +42,11 @@ body {
    1536px design width and centered. The top bar holds life and the kill/time stats,
    the bottom bar holds the control hints and the volume controls. */
 .hud {
-  padding: 6px 0;                 /* compact bars */
+  padding: calc(6px * var(--ui-scale)) 0;   /* scales with the game */
   background: var(--panel);
-  flex: 0 0 auto;                 /* bars keep their height, the stage absorbs slack */
+  flex: 0 0 auto;                 /* the stage absorbs the remaining slack */
+  user-select: none;              /* nothing in the top/bottom bars is text-selectable */
+  -webkit-user-select: none;
 }
 .hud-top { border-bottom: 1px solid #5a5e67; }     /* light-gray divider under the top bar */
 .hud-bottom { border-top: 1px solid #5a5e67; }      /* light-gray divider above the bottom bar */
@@ -49,6 +60,7 @@ body {
   justify-content: space-between;
   gap: 18px;
   min-height: 26px;              /* both bars share this row height so top and bottom match */
+  zoom: var(--ui-scale);         /* scale the bar content down with the game */
 }
 
 .hud-sound-group {
@@ -88,6 +100,56 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 12px;
+}
+
+/* Center group of the top bar: the XP-to-next-card bar and the ultimate cooldown dial(s). */
+/* Top bar is a rigid 3-column grid: equal side columns (minmax(0,1fr) so their content can
+   never grow the track) around an auto-sized centered middle. This pins the XP bar and the
+   ultimate dials dead-center no matter how many hearts or dials are shown. */
+.hud-top .hud-inner {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+}
+.hud-top .hud-life { justify-self: start; }
+.hud-top .hud-ult { justify-self: center; }
+.hud-top .hud-stats { justify-self: end; }
+.hud-ult { justify-content: center; }
+.xp-bar {
+  position: relative;
+  width: 300px;
+  height: 12px;
+  background: #2a2c31;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.xp-fill {
+  display: block;
+  height: 100%;
+  width: 0%;
+  background: var(--accent);
+  border-radius: 6px;
+  transition: width 120ms linear;
+}
+/* One dial per ultimate slot (crossbow shows up to three, others one). Each is a disc filled
+   clockwise by an inline conic-gradient set in hud.js; full yellow = the slot is ready. */
+.ult-circles {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  flex: 0 0 auto;
+  min-width: 78px;            /* room for 3 dials (3 x 22px + 2 x 6px gap) so count never shifts layout */
+}
+.ult-circle {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: conic-gradient(var(--accent) 360deg, #23252b 0deg);
+  border: 1px solid #3a3d44;
+}
+.ult-circle.ready {
+  border-color: var(--accent);
+  box-shadow: 0 0 6px rgba(245, 185, 66, 0.7);
 }
 
 .hearts {
@@ -156,13 +218,10 @@ body {
 }
 
 /* Fixed design-size box holding the canvas + overlays. game.js (fitApp) scales it uniformly
-   to fit the stage, so the game and its menu stay perfectly aligned at any window size.
-   Hidden until the first fit runs. Before the module loads this box is 0x0, which would
-   anchor the overlay layer at the stage center and flash the menu half offscreen. */
+   to fit the stage, so the game and its menu stay perfectly aligned at any window size. */
 .play-area {
   position: relative;
   flex: 0 0 auto;                 /* game.js sizes this to the on-screen game size */
-  visibility: hidden;             /* fitApp reveals it once sized */
 }
 
 /* Overlay layer: the menus are built at the fixed 1536x768 design size and CSS-scaled by
@@ -358,6 +417,15 @@ body {
   border: 1px solid var(--muted);
 }
 .pip.full { background: var(--accent); border-color: var(--accent); }
+
+/* Cards are click targets, so suppress text selection (no blue highlight when
+   clicking or double-clicking them). Covers the upgrade cards, the Confirm button,
+   and the menu ranger cards. */
+.buff-content,
+.char-option {
+  user-select: none;
+  -webkit-user-select: none;
+}
 
 /* Upgrade-card overlay shown at each card threshold. */
 .buff-overlay {
