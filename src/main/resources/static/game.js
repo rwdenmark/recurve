@@ -366,11 +366,14 @@ function fitApp() {
   if (canvas.width !== bw || canvas.height !== bh) { canvas.width = bw; canvas.height = bh; }
   renderScale = bw / WORLD_W;
 }
-// Resizing the buffer clears it, and the loop only paints during live play, so repaint
-// the pause screen when a resize lands while the game sits paused.
+// Resizing the buffer clears it, and the loop only paints during live play, so a resize
+// must repaint whatever static frame is on screen. Re-rendering with the timestamp of
+// the last painted frame reproduces it exactly, which keeps the frozen world visible
+// behind the card screen, the menu, and the game-over overlay instead of going black.
 function onViewportResize() {
   fitApp();
-  if (state.running && state.paused) renderPauseScreen();
+  if (state.paused) { renderPauseScreen(); return; }
+  if (!state.running || state.choosingBuff) render(lastRenderAt);
 }
 window.addEventListener("resize", onViewportResize);
 window.addEventListener("load", onViewportResize);
@@ -598,7 +601,13 @@ function onKeyDown(event) {
   const t = event.target;
   if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA")) return;
 
-  if (state.choosingBuff) { event.preventDefault(); return; }
+  if (state.choosingBuff) {
+    // Keep tracking held movement keys so a key pressed during the card screen still
+    // moves after it closes. The buff hotkeys live in their own listener in buffs.js.
+    if (MOVE_KEYS[event.code]) heldMoveKeys.add(MOVE_KEYS[event.code]);
+    event.preventDefault();
+    return;
+  }
 
   // Escape toggles pause during a run.
   if (event.code === "Escape") {
@@ -747,13 +756,14 @@ function renderPauseScreen() {
 
 // ---------------------------------------------------------------------------
 // Upgrade cards live in buffs.js. This handle hands them the hooks a buff pause
-// needs from the game: the shared state, timer shifting, input clearing, and
-// the loop resume.
+// needs from the game: the shared state, timer shifting, and the loop resume.
+// Held input is NOT cleared for the card screen. The window-level keyup/mouseup
+// listeners keep the held flags accurate while the overlay is up, so a button or
+// key held across it resumes firing or moving the instant play does.
 // ---------------------------------------------------------------------------
 const buffGame = {
   state,
   shiftTimers,
-  clearHeldInput: () => { heldMoveKeys.clear(); mouseDown = false; },
   resume: () => requestAnimationFrame(loop),
 };
 
@@ -1612,7 +1622,12 @@ function renderPlayer(now) {
   }
 }
 
+// Timestamp of the last painted frame, so a resize repaint can reproduce it exactly
+// (same timestamp, same animation frames) while the loop is frozen.
+let lastRenderAt = 0;
+
 function render(now) {
+  lastRenderAt = now;
   applyWorldTransform();
   ctx.fillStyle = "#000";
   ctx.fillRect(0, 0, WORLD_W, WORLD_H);

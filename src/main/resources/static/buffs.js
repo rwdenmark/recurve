@@ -88,15 +88,15 @@ let pendingCards = [];   // cards on offer while the overlay is up
 let selectedCard = null; // mouse-selected card awaiting the confirm click
 let activeGame = null;   // the game handle for the current selection screen
 
-// `game` is the handle game.js passes in: { state, shiftTimers, clearHeldInput,
-// resume }. Buff selection pauses the run, so it needs those four hooks.
+// `game` is the handle game.js passes in: { state, shiftTimers, resume }. Buff
+// selection pauses the run, so it needs those three hooks. Held input is left alone
+// on purpose, so fire or movement held across the card screen resumes seamlessly.
 export function startBuffSelection(now, game) {
   buffsAwarded += 1; // count the award (advances the next threshold) even if nothing is offered
   const cards = pickBuffCards(3, game.state);
   if (cards.length === 0) return; // everything maxed out: skip the pause, keep playing
   game.state.choosingBuff = true;
   buffPausedAt = now;
-  game.clearHeldInput(); // drop held input so the player doesn't auto-move on resume
   pendingCards = cards;
   selectedCard = null;
   activeGame = game;

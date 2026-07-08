@@ -92,13 +92,14 @@ body {
 
 .hearts {
   display: inline-flex;
+  align-items: center;
   gap: 6px;
-  font-size: 24px;
-  line-height: 1;
 }
 
-.heart.full { color: #e0414e; }
-.heart.empty { color: var(--muted); }
+/* One shared SVG shape for both states (see hud.js), filled or stroked. */
+.heart { width: 22px; height: 22px; display: block; }
+.heart.full { fill: #e0414e; }
+.heart.empty { fill: none; stroke: var(--muted); stroke-width: 1.6; }
 
 .hud-sound {
   display: inline-flex;
@@ -206,16 +207,23 @@ body {
   display: none;
 }
 
-/* First-load screen. While the overlay carries the "loading" class the menu content is
-   hidden and only the spinning gear and LOADING show. game.js drops the class once the
-   sprites and leaderboard are in. */
+/* First-load screen. While the overlay carries the "loading" class the menu panel
+   still renders at its real size with its contents invisible, and the spinning gear
+   and LOADING float over it. Same element, so the panel is pixel-identical to the
+   menu that swaps in when game.js drops the class. */
 .loading-screen { display: none; }
-.overlay.loading .overlay-content { display: none; }
+.overlay.loading .overlay-content > * { visibility: hidden; }
 .overlay.loading .loading-screen {
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   gap: 20px;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) scale(1.5);
+  z-index: 1;   /* above the menu panel it floats on */
 }
 .loading-gear {
   transform-origin: 50% 50%;
