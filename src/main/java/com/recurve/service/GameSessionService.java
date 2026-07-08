@@ -23,8 +23,9 @@ public class GameSessionService {
     private static final int SWEEP_EVERY = 500;
     // Hard ceiling on live sessions. At the cap the oldest session is evicted, which
     // keeps new runs playable and costs an attacker their own oldest entries first.
-    // 50k entries is roughly 10MB, safe on the smallest deployment target.
-    static final int MAX_SESSIONS = 50_000;
+    // 50k entries is roughly 10MB, safe on the smallest deployment target. Public
+    // because the cap test lives in the flat test package, not this one.
+    public static final int MAX_SESSIONS = 50_000;
 
     private final Map<String, Long> sessions = new ConcurrentHashMap<>();
     private final AtomicInteger callsSinceSweep = new AtomicInteger();
@@ -64,8 +65,8 @@ public class GameSessionService {
         return id != null && sessions.remove(id) != null;
     }
 
-    /** Live session count, for the cap tests. */
-    int liveCount() {
+    /** Live session count. Public for the cap test, which lives in the flat test package. */
+    public int liveCount() {
         return sessions.size();
     }
 

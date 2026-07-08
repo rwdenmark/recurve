@@ -1347,6 +1347,13 @@ const tileDist = (ax, ay, bx, by) => Math.hypot(ax - bx, ay - by);
 
 // Spawn a matching skeleton minion next to the necromancer, fading in.
 function summonSkeleton(necro, ntype, now) {
+  // Re-check the cap at release. Fort spawns can fill the board during the 450ms cast
+  // and several necromancers can cast at once, so the start-of-cast check alone can't
+  // hold the ceiling. A whiffed summon retries on the normal cooldown.
+  if (state.enemies.length >= maxEnemies()) {
+    necro.lastSummonAt = now;
+    return;
+  }
   const skelKey = ntype.skeleton;
   const floats = ALL_TYPES[skelKey].floats === true;
   let sx = necro.x, sy = necro.y;
