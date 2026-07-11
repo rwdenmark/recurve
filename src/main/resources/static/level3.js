@@ -24,6 +24,7 @@
 import {
   MAP_COLS as COLS, MAP_ROWS as ROWS, PLAYER_START_X as CX, PLAYER_START_Y as CY,
 } from "./mapgen.js";
+import { shuffleInPlace } from "./shuffle.js";
 
 const TILE = 48;
 
@@ -666,12 +667,11 @@ function renderBackground(sprites) {
   // Decorative variants: grates (2-4) only on OUTER water-walls (those against the border,
   // not the ones lining floor paths). Pipe outlets (8-12) on any straight water-wall.
   if (P.wwSewer || P.wwGrate) {
-    const shuffle = (a) => { for (let i = a.length - 1; i > 0; i--) { const j = (Math.random() * (i + 1)) | 0; const t = a[i]; a[i] = a[j]; a[j] = t; } };
     const used = new Set();
     const chebFar = (list, wx, wy, minD, sameSide, side) => !list.some(([px, py, ps]) => (!sameSide || ps === side) && Math.max(Math.abs(px - wx), Math.abs(py - wy)) < minD);
     if (P.wwGrate) {
       const outer = straightWalls.filter((c) => c[3]);
-      shuffle(outer);
+      shuffleInPlace(outer);
       const placed = [], target = 2 + ((Math.random() * 3) | 0);
       for (const [wx, wy, side] of outer) {
         if (placed.length >= target) break;
@@ -681,7 +681,7 @@ function renderBackground(sprites) {
     }
     if (P.wwSewer) {
       const rest = straightWalls.filter((c) => !used.has(c[1] * COLS + c[0]));
-      shuffle(rest);
+      shuffleInPlace(rest);
       const placed = [], target = 8 + ((Math.random() * 5) | 0);
       for (const [wx, wy, side] of rest) {
         if (placed.length >= target) break;
@@ -692,7 +692,7 @@ function renderBackground(sprites) {
   }
 
   if (P.stamps.length) {
-    for (let i = openWater.length - 1; i > 0; i--) { const j = (Math.random() * (i + 1)) | 0; const t = openWater[i]; openWater[i] = openWater[j]; openWater[j] = t; }
+    shuffleInPlace(openWater);
     const n = Math.min(16, openWater.length);
     for (let i = 0; i < n; i++) {
       const [wx, wy] = openWater[i];

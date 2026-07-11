@@ -9,6 +9,9 @@ import {
   TILES, isSolid, isFortAt, SPAWN_POINTS, buildStartingMap,
 } from "./mapgen.js";
 import { shuffleInPlace } from "./shuffle.js";
+import {
+  createChargeQueue, joinQueue, stepQueue, reduceQueue, shiftQueue, resetQueue, queueCircles,
+} from "./chargequeue.js";
 import { buildFlowField, nextStepFromField } from "./pathfinding.js";
 import {
   musicMode, playMenuMusic, playGameMusic, pauseMusic, resumeMusic,
@@ -127,7 +130,8 @@ const SRC = {
 const ANIM_ROW = { IDLE: 0, WALK: 1, RUN: 2, ATTACK: 3, HURT: 4, DIE: 5, SUMMON: 6 };
 const ANIM_FRAMES = 10;
 const ARCHER_CELL = { sheet: "archer", w: 277, h: 240, ax: 88.1, ay: 216.1, scale: 0.27 };
-// Player skins (cosmetic). All three share ARCHER_CELL's geometry.
+// Player rangers. All three share ARCHER_CELL's geometry, but the choice sets
+// stats, ultimate, and card pool (see RANGERS and buffs.js), not just the skin.
 const ARCHER_SHEETS = ["archer", "archer2", "archer3"];
 let selectedRanger = 0;
 function playerCell() { return { ...ARCHER_CELL, sheet: ARCHER_SHEETS[selectedRanger] }; }
@@ -633,10 +637,8 @@ let ultReadyAt = 0;                 // gray/green: time the ultimate comes off c
 let ultCastAt = -ULT_COOLDOWN_MS;   // time the current gray/green cooldown started
 let invisUntil = 0;                 // gray: invisibility is active until this time
 let ballistas = [];                 // crossbow: the deployed turrets
-let ballistaCharging = 0;           // crossbow: dead turret slots waiting to recharge
-let ballistaChargeEnd = 0;          // crossbow: time the current recharge finishes (0 = none)
-let stormCharging = 0;              // green: arrow-storm charges currently recharging
-let stormChargeEnd = 0;             // green: time the current storm charge finishes (0 = none)
+const ballistaQueue = createChargeQueue(); // crossbow: dead turret slots recharging
+const stormQueue = createChargeQueue();    // green: spent arrow-storm charges recharging
 let stormKillInProgress = false;    // true while an arrow-storm volley deals its kills (they don't recharge it)
 // A shot triggered but whose arrow hasn't left the bow yet.
 let pendingShot = null;
@@ -663,6 +665,10 @@ function onKeyDown(event) {
     return;
   }
 
+  // We track held state ourselves, so OS auto-repeat is redundant. This must run
+  // before the Escape branch, or holding Escape rapid-toggles pause on auto-repeat.
+  if (event.repeat) { event.preventDefault(); return; }
+
   // Escape toggles pause during a run.
   if (event.code === "Escape") {
     if (state.running) {
@@ -671,9 +677,6 @@ function onKeyDown(event) {
     }
     return;
   }
-
-  // We track held state ourselves, so OS auto-repeat is redundant.
-  if (event.repeat) { event.preventDefault(); return; }
 
   if (!state.running || state.paused) return;
 
@@ -770,8 +773,8 @@ function shiftTimers(delta) {
   ultReadyAt += delta;
   ultCastAt += delta;
   invisUntil += delta;
-  if (ballistaChargeEnd !== 0) ballistaChargeEnd += delta;
-  if (stormChargeEnd !== 0) stormChargeEnd += delta;
+  shiftQueue(ballistaQueue, delta);
+  shiftQueue(stormQueue, delta);
   for (const b of ballistas) { b.lastFireAt += delta; b.fireStart += delta; }
   if (pendingShot) pendingShot.releaseAt += delta;
   for (const e of state.enemies) {
@@ -909,6 +912,22 @@ function fireArrow(angle) {
   pendingShot = { angle, releaseAt: now + ARROW_RELEASE_MS / fireRateMult };
 }
 
+// Single source for the player-arrow shape, shared by manual shots, omni volleys,
+// storm visuals, and ballista arrows. Overrides carry the caller's extras (visual
+// flag, ballista dmg/pierce/range), so the three call sites can't drift apart.
+function makeArrow(px, py, angle, now, overrides = {}) {
+  return {
+    px, py,
+    vx: Math.cos(angle) * ARROW_SPEED,
+    vy: Math.sin(angle) * ARROW_SPEED,
+    angle,
+    traveled: 0,
+    lastStepAt: now,
+    hitEnemies: new Set(),
+    ...overrides,
+  };
+}
+
 // Spawn one ordinary arrow per angle from the center of the player's authoritative
 // tile (destination of any move). Shared by manual shots and omni volleys.
 function spawnArrows(angles, now) {
@@ -916,15 +935,7 @@ function spawnArrows(angles, now) {
   const px = (t.x + 0.5) * TILE_SIZE;
   const py = (t.y + 0.5) * TILE_SIZE;
   for (const a of angles) {
-    state.projectiles.push({
-      px, py,
-      vx: Math.cos(a) * ARROW_SPEED,
-      vy: Math.sin(a) * ARROW_SPEED,
-      angle: a,
-      traveled: 0,
-      lastStepAt: now,
-      hitEnemies: new Set(),
-    });
+    state.projectiles.push(makeArrow(px, py, a, now));
   }
   playSfx("bow", 10);
 }
@@ -983,11 +994,11 @@ const BURST_MAX_BONUS_TILES = 3;
 function invisDurationMs() { return INVIS_DURATION_MS + Math.min(INVIS_MAX_BONUS_SEC, invisBonusSec) * 1000; }
 function burstRangeTiles() { return BURST_RANGE_TILES + Math.min(BURST_MAX_BONUS_TILES, burstBonusTiles); }
 function arrowStormCharges() { return Math.min(3, Math.max(1, burstBonusTiles)); }
-function stormReadyCharges() { return arrowStormCharges() - stormCharging; }
+function stormReadyCharges() { return arrowStormCharges() - stormQueue.charging; }
 function ballistaSlots() { return Math.min(MAX_BALLISTAS, 1 + ballistaBonus); }
 function ballistaCooldownMs() { return ballistaFastCd ? BALLISTA_FAST_COOLDOWN_MS : BALLISTA_COOLDOWN_MS; }
 // Slots free to deploy right now: total slots minus the live turrets and those recharging.
-function readyBallistaSlots() { return ballistaSlots() - ballistas.length - ballistaCharging; }
+function readyBallistaSlots() { return ballistaSlots() - ballistas.length - ballistaQueue.charging; }
 
 function ultimateReady(now) {
   if (selectedRanger === 1) return readyBallistaSlots() > 0; // crossbow: any free slot
@@ -1000,32 +1011,17 @@ function ultimateReady(now) {
 function ultimateCircles(now) {
   if (selectedRanger === 1) {
     const slots = ballistaSlots();
-    const ready = Math.max(0, readyBallistaSlots());
-    const cd = ballistaCooldownMs();
-    const circles = [];
-    for (let i = 0; i < ready; i++) circles.push({ fraction: 1, ready: true });
-    if (ballistaCharging > 0) {
-      circles.push({ fraction: Math.max(0, Math.min(1, 1 - (ballistaChargeEnd - now) / cd)), ready: false });
-      for (let i = 1; i < ballistaCharging; i++) circles.push({ fraction: 0, ready: false });
-    }
+    const circles = queueCircles(ballistaQueue, now, Math.max(0, readyBallistaSlots()), ballistaCooldownMs());
     while (circles.length < slots) circles.push({ fraction: 0, ready: false }); // deployed slots
     return circles.slice(0, slots);
   }
   if (selectedRanger === 2) {
-    const total = arrowStormCharges();
-    const ready = Math.max(0, stormReadyCharges());
-    const circles = [];
-    for (let i = 0; i < ready; i++) circles.push({ fraction: 1, ready: true });
-    if (stormCharging > 0) {
-      circles.push({ fraction: Math.max(0, Math.min(1, 1 - (stormChargeEnd - now) / ARROW_STORM_COOLDOWN_MS)), ready: false });
-      for (let i = 1; i < stormCharging; i++) circles.push({ fraction: 0, ready: false });
-    }
-    return circles.slice(0, total);
+    return queueCircles(stormQueue, now, Math.max(0, stormReadyCharges()), ARROW_STORM_COOLDOWN_MS)
+        .slice(0, arrowStormCharges());
   }
-  const active = now < invisUntil; // gray
-  if (now >= ultReadyAt) return [{ fraction: 1, ready: true, active }];
-  // While invisible the cooldown hasn't started, so clamp the dial to empty (never negative).
-  return [{ fraction: Math.max(0, 1 - (ultReadyAt - now) / ULT_COOLDOWN_MS), ready: false, active }];
+  // Gray. While invisible the cooldown hasn't started, so clamp the dial to empty (never negative).
+  if (now >= ultReadyAt) return [{ fraction: 1, ready: true }];
+  return [{ fraction: Math.max(0, 1 - (ultReadyAt - now) / ULT_COOLDOWN_MS), ready: false }];
 }
 
 function activateUltimate(now) {
@@ -1086,8 +1082,7 @@ function findBallistaTile(t) {
 // current damage. A single bow twang plays for the whole volley.
 function activateArrowBurst(now) {
   if (stormReadyCharges() <= 0) return;
-  stormCharging += 1;                                                        // this charge starts recharging
-  if (stormChargeEnd === 0) stormChargeEnd = now + ARROW_STORM_COOLDOWN_MS;  // one recharges at a time
+  joinQueue(stormQueue, now, ARROW_STORM_COOLDOWN_MS); // this charge starts recharging
   const reach = burstRangeTiles();
   const t = playerTile();
   const px = (t.x + 0.5) * TILE_SIZE, py = (t.y + 0.5) * TILE_SIZE;
@@ -1099,10 +1094,7 @@ function activateArrowBurst(now) {
     const c = enemyCenterPx(enemy, now);
     const ang = Math.atan2(c.y - py, c.x - px);
     // A visual-only arrow (skipped by resolveCollisions) plus a direct, guaranteed hit.
-    state.projectiles.push({
-      px, py, vx: Math.cos(ang) * ARROW_SPEED, vy: Math.sin(ang) * ARROW_SPEED,
-      angle: ang, traveled: 0, lastStepAt: now, hitEnemies: new Set(), visual: true,
-    });
+    state.projectiles.push(makeArrow(px, py, ang, now, { visual: true }));
     damageEnemy(enemy, now);
   }
   stormKillInProgress = false;
@@ -1187,30 +1179,12 @@ function stepBallistas(now) {
     b.angle = Math.atan2(c.y - by, c.x - bx);
     if (now - b.lastFireAt >= DEFAULT_ATTACK_INTERVAL_MS / (fireRateMult * BALLISTA_STAT_MULT)) {
       b.lastFireAt = now; b.firing = true; b.fireStart = now;
-      state.projectiles.push({
-        px: bx, py: by, vx: Math.cos(b.angle) * ARROW_SPEED, vy: Math.sin(b.angle) * ARROW_SPEED,
-        angle: b.angle, traveled: 0, lastStepAt: now, hitEnemies: new Set(),
+      state.projectiles.push(makeArrow(bx, by, b.angle, now, {
         dmg: playerDamage * BALLISTA_STAT_MULT, pierce: Math.floor(playerPierce * BALLISTA_STAT_MULT), range,
-      });
+      }));
       playSfx("bow", 10);
     }
     if (b.firing && now - b.fireStart >= BALLISTA_FIRE_FRAMES * BALLISTA_FIRE_ANIM_MS) b.firing = false;
-  }
-}
-
-// Advance the recharge queue: one dead slot recharges at a time, then the next begins.
-function stepBallistaCooldowns(now) {
-  if (ballistaChargeEnd !== 0 && now >= ballistaChargeEnd) {
-    ballistaCharging -= 1;
-    ballistaChargeEnd = ballistaCharging > 0 ? now + ballistaCooldownMs() : 0;
-  }
-}
-
-// Advance the green ranger's arrow-storm charge recharge (one charge at a time).
-function stepStormCooldowns(now) {
-  if (stormChargeEnd !== 0 && now >= stormChargeEnd) {
-    stormCharging -= 1;
-    stormChargeEnd = stormCharging > 0 ? now + ARROW_STORM_COOLDOWN_MS : 0;
   }
 }
 
@@ -1223,8 +1197,7 @@ function damageBallistaAt(bx, by, dmg, now) {
 function killBallista(b, now) {
   const i = ballistas.indexOf(b);
   if (i >= 0) ballistas.splice(i, 1);
-  ballistaCharging += 1;                                       // slot joins the recharge queue
-  if (ballistaChargeEnd === 0) ballistaChargeEnd = now + ballistaCooldownMs(); // one recharges at a time
+  joinQueue(ballistaQueue, now, ballistaCooldownMs()); // slot joins the recharge queue
   invalidateBallistaFields();
 }
 
@@ -1301,27 +1274,19 @@ function spawnIntervalMs() {
   return Math.max(SPAWN_INTERVAL_FLOOR, SPAWN_INTERVAL_BASE - SPAWN_INTERVAL_PER_CARD * buffsAwarded);
 }
 
-function spawnEnemyAt(fort, now) {
-  // Weighted pick across the current level's unlocked types (see spawnWeight).
-  const keys = levelTypes();
-  const weights = keys.map((k) => spawnWeight(k));
-  const total = weights.reduce((s, w) => s + w, 0);
-  let r = Math.random() * total;
-  let typeKey = keys[0];
-  for (let i = 0; i < keys.length; i++) {
-    r -= weights[i];
-    if (r <= 0) { typeKey = keys[i]; break; }
-  }
-  state.enemies.push({
-    x: fort.x,
-    y: fort.y,
+// Single source for the enemy shape. Fort spawns and necromancer summons both build
+// from here, so a new per-enemy field is added once, not kept in sync by hand.
+function makeEnemy(typeKey, x, y, now, overrides = {}) {
+  return {
+    x,
+    y,
     moving: false,
     moveStartAt: 0,
     moveDuration: 0,
-    fromX: fort.x,
-    fromY: fort.y,
-    toX: fort.x,
-    toY: fort.y,
+    fromX: x,
+    fromY: y,
+    toX: x,
+    toY: y,
     facing: "left",
     type: typeKey,
     anim: "WALK",
@@ -1341,7 +1306,22 @@ function spawnEnemyAt(fort, now) {
     summonReleased: false,
     projReleased: false,
     spawnFadeUntil: 0,
-  });
+    ...overrides,
+  };
+}
+
+function spawnEnemyAt(fort, now) {
+  // Weighted pick across the current level's unlocked types (see spawnWeight).
+  const keys = levelTypes();
+  const weights = keys.map((k) => spawnWeight(k));
+  const total = weights.reduce((s, w) => s + w, 0);
+  let r = Math.random() * total;
+  let typeKey = keys[0];
+  for (let i = 0; i < keys.length; i++) {
+    r -= weights[i];
+    if (r <= 0) { typeKey = keys[i]; break; }
+  }
+  state.enemies.push(makeEnemy(typeKey, fort.x, fort.y, now));
 }
 
 function maybeSpawnEnemy(now) {
@@ -1354,7 +1334,10 @@ function maybeSpawnEnemy(now) {
   const deficit = targetEnemyCount() - forted;
   if (deficit <= 0) return;
   // Spawn only on this level's points that no enemy occupies (never stack on a tile).
-  const openForts = levelSpawns().filter((s) => !isEnemyAt(s.x, s.y));
+  // Also skip the player's tile: level 2 portals and level 3 grates are walkable, and an
+  // enemy must not materialize inside a player camping one.
+  const pt = playerTile();
+  const openForts = levelSpawns().filter((s) => !isEnemyAt(s.x, s.y) && !(s.x === pt.x && s.y === pt.y));
   if (openForts.length === 0) return;
   // Top up toward the target. The batch grows with cards (capped by the fort count anyway)
   // so a new level refills toward its high target quickly instead of easing in each time.
@@ -1539,7 +1522,7 @@ function damageEnemy(enemy, now, dmg = playerDamage) {
       // Each scoring kill charges the active ranger's ultimate 0.5s faster: invisibility only
       // while not vanished, arrow storm never from its own volley, the ballista stays fixed.
       if (selectedRanger === 0 && now >= invisUntil) ultReadyAt = Math.max(now, ultReadyAt - ULT_KILL_REDUCTION_MS);
-      else if (selectedRanger === 2 && !stormKillInProgress && stormChargeEnd !== 0) stormChargeEnd = Math.max(now, stormChargeEnd - ULT_KILL_REDUCTION_MS);
+      else if (selectedRanger === 2 && !stormKillInProgress) reduceQueue(stormQueue, now, ULT_KILL_REDUCTION_MS);
     }
   } else {
     // Non-fatal hit: pause the enemy in place for the flinch. Record how far into its current
@@ -1757,15 +1740,11 @@ function summonSkeleton(necro, ntype, now) {
     if (blocked || isEnemyAt(nx, ny)) continue;
     sx = nx; sy = ny; break;
   }
-  const skel = {
-    x: sx, y: sy, moving: false, moveStartAt: 0, moveDuration: 0,
-    fromX: sx, fromY: sy, toX: sx, toY: sy, facing: necro.facing,
-    type: skelKey, anim: "IDLE", animStart: now, dying: false, deathStart: 0,
-    attacking: false, attackStart: 0, hp: enemyHp(skelKey), hurtUntil: 0,
-    summonedMinion: null, lastSummonAt: null, lastAttackAt: -1e9,
-    summoning: false, summonStart: 0, summonReleased: false, projReleased: false,
+  const skel = makeEnemy(skelKey, sx, sy, now, {
+    facing: necro.facing,
+    anim: "IDLE",
     spawnFadeUntil: now + SUMMON_FADE_MS,
-  };
+  });
   state.enemies.push(skel);
   necro.summonedMinion = skel;
   necro.lastSummonAt = now;
@@ -2122,7 +2101,10 @@ function drawPixelated(src, amount) {
   const block = 1 + Math.round(amount * 40);
   const sw = Math.max(1, Math.round(WORLD_W / block));
   const sh = Math.max(1, Math.round(WORLD_H / block));
-  pixelScratch.width = sw; pixelScratch.height = sh;
+  // Assigning width/height reallocates the canvas, so only do it when the size
+  // actually changes. The clearRect below covers the reuse case.
+  if (pixelScratch.width !== sw) pixelScratch.width = sw;
+  if (pixelScratch.height !== sh) pixelScratch.height = sh;
   const pctx = pixelScratch.getContext("2d");
   pctx.imageSmoothingEnabled = false;
   pctx.clearRect(0, 0, sw, sh);
@@ -2187,10 +2169,8 @@ function enterLevel(n, now) {
   ultCastAt = -ULT_COOLDOWN_MS;
   invisUntil = 0;
   ballistas = [];
-  ballistaCharging = 0;
-  ballistaChargeEnd = 0;
-  stormCharging = 0;
-  stormChargeEnd = 0;
+  resetQueue(ballistaQueue);
+  resetQueue(stormQueue);
   invalidateBallistaFields();
   flowField = null;       // rebuild the flow field for the new map
   setupLevelMap(n);
@@ -2246,14 +2226,16 @@ function loop(now) {
       maybeFireOmni(now);
       stepEnemies(now);
       stepBallistas(now);
-      stepBallistaCooldowns(now);
-      stepStormCooldowns(now);
+      stepQueue(ballistaQueue, now, ballistaCooldownMs());
+      stepQueue(stormQueue, now, ARROW_STORM_COOLDOWN_MS);
       resolveCollisions(now);
       stepEnemyProjectiles(now);
       render(now);
       updateHud(now, state);
       updateProgress((state.kills - killCardBaseline) / killsPerCard(), ultimateCircles(now));
-      if (state.kills - killCardBaseline >= killsPerCard()) {
+      // Guard on dying like the level-transition check above, or a kill and a death
+      // in the same frame open the card screen over the death animation.
+      if (!state.player.dying && state.kills - killCardBaseline >= killsPerCard()) {
         killCardBaseline = state.kills;
         startBuffSelection(now, buffGame);
       }
@@ -2316,10 +2298,8 @@ function resetState() {
   ultCastAt = -ULT_COOLDOWN_MS;
   invisUntil = 0;
   ballistas = [];
-  ballistaCharging = 0;
-  ballistaChargeEnd = 0;
-  stormCharging = 0;
-  stormChargeEnd = 0;
+  resetQueue(ballistaQueue);
+  resetQueue(stormQueue);
   invalidateBallistaFields();
   resetRunStats(ranger);
   state.enemies = [];
@@ -2342,7 +2322,7 @@ function gameOver() {
 }
 
 // ---------------------------------------------------------------------------
-// Character select (cosmetic)
+// Character select (stats, ultimate, and card pool differ per ranger)
 // ---------------------------------------------------------------------------
 const charCards = Array.from(document.querySelectorAll(".char-option")).map((opt) => ({
   option: opt,

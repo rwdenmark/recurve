@@ -176,7 +176,9 @@ export function loadSfx() {
       .then((r) => r.arrayBuffer())
       .then((b) => ctx.decodeAudioData(b))
       .then((buf) => { sfxBuffers[name] = buf; })
-      .catch(() => {});
+      // A failed load leaves that effect permanently missing, so say so. Not an
+      // autoplay rejection, those are the play() catches above.
+      .catch((e) => console.warn("sfx load failed:", name, e));
   }
 }
 export function playSfx(name, boost = 1) {
