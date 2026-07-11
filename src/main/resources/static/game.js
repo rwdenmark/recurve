@@ -12,6 +12,7 @@ import { shuffleInPlace } from "./shuffle.js";
 import {
   createChargeQueue, joinQueue, stepQueue, reduceQueue, shiftQueue, resetQueue, queueCircles,
 } from "./chargequeue.js";
+import { xpForCard, spawnCards, cardsForLevel, tierUnlocks } from "./progression.js";
 import { buildFlowField, nextStepFromField } from "./pathfinding.js";
 import {
   musicMode, playMenuMusic, playGameMusic, pauseMusic, resumeMusic,
@@ -23,7 +24,7 @@ import {
   playerDamage, playerSpeedMult, fireRateMult, playerMultiShot, omniLevel,
   playerPierce, playerArrowRange, buffsAwarded,
   invisBonusSec, ballistaBonus, ballistaFastCd, burstBonusTiles,
-  KILLS_PER_CARD_FIRST_CYCLE, startBuffSelection, resetRunStats, applyMaxBuffs,
+  startBuffSelection, resetRunStats, applyMaxBuffs,
 } from "./buffs.js";
 import {
   refreshLeaderboard, startGameSession, setLastRunDuration, resetScoreForm, initScoreForm,
@@ -130,8 +131,8 @@ const SRC = {
 const ANIM_ROW = { IDLE: 0, WALK: 1, RUN: 2, ATTACK: 3, HURT: 4, DIE: 5, SUMMON: 6 };
 const ANIM_FRAMES = 10;
 const ARCHER_CELL = { sheet: "archer", w: 277, h: 240, ax: 88.1, ay: 216.1, scale: 0.27 };
-// Player rangers. All three share ARCHER_CELL's geometry, but the choice sets
-// stats, ultimate, and card pool (see RANGERS and buffs.js), not just the skin.
+// Player rangers. All three share ARCHER_CELL's geometry. The choice also sets
+// stats, ultimate, and card pool (see RANGERS and buffs.js).
 const ARCHER_SHEETS = ["archer", "archer2", "archer3"];
 let selectedRanger = 0;
 function playerCell() { return { ...ARCHER_CELL, sheet: ARCHER_SHEETS[selectedRanger] }; }
@@ -243,8 +244,8 @@ const GRASS_SPEED_MULT = 0.85;  // grass slower
 const DIAG_DURATION_FACTOR = 1.414;
 
 // speedScale = fraction of player speed on the same terrain. hpScale = multiples of
-// DEFAULT_DAMAGE (so arrows-to-kill holds if the default changes). unlockCards = how
-// many upgrade cards the player must have taken before this type starts spawning.
+// DEFAULT_DAMAGE (so arrows-to-kill holds if the default changes). A type's tier is
+// its position in LEVEL_TYPES; tier unlock timing lives in progression.js.
 const KNIGHT_TYPES = {
   knight_one: {
     cell: KNIGHT_CELL,
@@ -252,7 +253,6 @@ const KNIGHT_TYPES = {
     attackWindupMs: 1000,
     damage: 1,
     hpScale: 1,
-    unlockCards: 0,
   },
   knight_two: {
     cell: KNIGHT2_CELL,
@@ -260,7 +260,6 @@ const KNIGHT_TYPES = {
     attackWindupMs: 1000,
     damage: 1,
     hpScale: 2,
-    unlockCards: 3,
   },
   knight_three: {
     cell: KNIGHT3_CELL,
@@ -268,17 +267,16 @@ const KNIGHT_TYPES = {
     attackWindupMs: 1000,
     damage: 1,
     hpScale: 3,
-    unlockCards: 6,
   },
 };
 // Troll enemy types for level 2. Same shape as the knights, mirroring the matching
 // knight's speed, damage, and attack windup, with their own health (hpScale x
-// DEFAULT_DAMAGE gives troll1=8, troll2=10, troll3=12 HP) and unlocking on level-2 cards
-// (troll1 from the start, troll2 after 3, troll3 after 6).
+// DEFAULT_DAMAGE gives troll1=8, troll2=10, troll3=12 HP). Tier unlock timing is
+// per cycle/level in progression.js.
 const TROLL_TYPES = {
-  troll_one:   { cell: TROLL_CELL,  speedScale: 0.25, attackWindupMs: 1000, damage: 1, hpScale: 4, unlockCards: 0 },
-  troll_two:   { cell: TROLL2_CELL, speedScale: 0.40, attackWindupMs: 1000, damage: 1, hpScale: 5, unlockCards: 3 },
-  troll_three: { cell: TROLL3_CELL, speedScale: 0.60, attackWindupMs: 1000, damage: 1, hpScale: 6, unlockCards: 6 },
+  troll_one:   { cell: TROLL_CELL,  speedScale: 0.25, attackWindupMs: 1000, damage: 1, hpScale: 4 },
+  troll_two:   { cell: TROLL2_CELL, speedScale: 0.40, attackWindupMs: 1000, damage: 1, hpScale: 5 },
+  troll_three: { cell: TROLL3_CELL, speedScale: 0.60, attackWindupMs: 1000, damage: 1, hpScale: 6 },
 };
 // Level 3 necromancers. Ranged summoners, not melee: they path to ~4 tiles from the player
 // and fire slow, non-homing fireballs, and they summon a matching skeleton minion. hpScale
@@ -286,16 +284,16 @@ const TROLL_TYPES = {
 // necromancer's minion shares its health (skeleton_* hpScale matches). kind drives the AI
 // branch, skeleton = the summoned minion type (skeleton_three floats over water).
 const NECRO_TYPES = {
-  necro_one:   { cell: NECRO_CELL,  kind: "necro", skeleton: "skeleton_one",   projectile: "necro1Fire", speedScale: 0.125, damage: 1, hpScale: 7, unlockCards: 0 },
-  necro_two:   { cell: NECRO2_CELL, kind: "necro", skeleton: "skeleton_two",   projectile: "necro2Fire", speedScale: 0.20, damage: 1, hpScale: 8, unlockCards: 3 },
-  necro_three: { cell: NECRO3_CELL, kind: "necro", skeleton: "skeleton_three", projectile: "necro3Fire", speedScale: 0.30, damage: 1, hpScale: 9, unlockCards: 6 },
+  necro_one:   { cell: NECRO_CELL,  kind: "necro", skeleton: "skeleton_one",   projectile: "necro1Fire", speedScale: 0.125, damage: 1, hpScale: 7 },
+  necro_two:   { cell: NECRO2_CELL, kind: "necro", skeleton: "skeleton_two",   projectile: "necro2Fire", speedScale: 0.20, damage: 1, hpScale: 8 },
+  necro_three: { cell: NECRO3_CELL, kind: "necro", skeleton: "skeleton_three", projectile: "necro3Fire", speedScale: 0.30, damage: 1, hpScale: 9 },
 };
 // Skeleton minions: melee chasers like knights/trolls (summoned, never spawned from forts).
 // hpScale matches the summoning necromancer. skeleton_three floats over water (floats: true).
 const SKELETON_TYPES = {
-  skeleton_one:   { cell: SKEL_CELL,  kind: "skeleton", speedScale: 0.25, attackWindupMs: 1000, damage: 1, hpScale: 7, unlockCards: 0, floats: false },
-  skeleton_two:   { cell: SKEL2_CELL, kind: "skeleton", speedScale: 0.40, attackWindupMs: 1000, damage: 1, hpScale: 8, unlockCards: 0, floats: false },
-  skeleton_three: { cell: SKEL3_CELL, kind: "skeleton", speedScale: 0.60, attackWindupMs: 1000, damage: 1, hpScale: 9, unlockCards: 0, floats: true },
+  skeleton_one:   { cell: SKEL_CELL,  kind: "skeleton", speedScale: 0.25, attackWindupMs: 1000, damage: 1, hpScale: 7, floats: false },
+  skeleton_two:   { cell: SKEL2_CELL, kind: "skeleton", speedScale: 0.40, attackWindupMs: 1000, damage: 1, hpScale: 8, floats: false },
+  skeleton_three: { cell: SKEL3_CELL, kind: "skeleton", speedScale: 0.60, attackWindupMs: 1000, damage: 1, hpScale: 9, floats: true },
 };
 // Every enemy across all levels, keyed by type, so lookups (HP, cell, step timing)
 // don't care which level spawned it.
@@ -308,6 +306,12 @@ const LEVEL_TYPES = {
   2: ["troll_one", "troll_two", "troll_three"],
   3: ["necro_one", "necro_two", "necro_three"],
 };
+// XP toward the next card per scoring kill. A tier-n enemy is worth n (its 1-based
+// position in its level's list), and the kill counter still counts every kill as 1.
+const CARD_XP_BY_TYPE = {};
+for (const types of Object.values(LEVEL_TYPES)) {
+  types.forEach((key, i) => { CARD_XP_BY_TYPE[key] = i + 1; });
+}
 function levelTypes() { return LEVEL_TYPES[level] || LEVEL_TYPES[1]; }
 function levelSpawns() {
   if (level === 3) return l3Spawns();               // sewer: wall portals + floor grates (per run)
@@ -321,9 +325,11 @@ function levelCards() { return Math.max(0, buffsAwarded - levelCardBaseline); }
 function enemyHp(typeKey) {
   return ALL_TYPES[typeKey].hpScale * DEFAULT_DAMAGE + cycle * CYCLE_HP_STEP;
 }
-// A type is available once the player has taken its unlockCards upgrade cards this level.
+// A type is available once enough cards have been taken this level for its tier
+// (its position in the level's type list). The timing lives in progression.js.
 function spawnWeight(typeKey) {
-  return levelCards() >= ALL_TYPES[typeKey].unlockCards ? 1 : 0;
+  const tier = levelTypes().indexOf(typeKey);
+  return levelCards() >= tierUnlocks(cycle, level)[tier] ? 1 : 0;
 }
 // Effective speed fraction for a type this cycle: base speedScale plus the per-cycle bump.
 function enemySpeedScale(typeKey) {
@@ -471,17 +477,14 @@ window.addEventListener("keydown", unlockAudio);
 const GOD_MODE = false;                 // testing helper: start with all upgrade cards maxed and take no damage.
 const START_LEVEL = 1;                 // 1 = normal play (loop through 1 -> 2 -> 3). Set to 2/3 to jump into a level for design work.
 const LEVEL_COUNT = 3;                 // distinct levels in the loop (1 = grass, 2 = cave, 3 = sewer)
-const CARDS_PER_LEVEL = 10;            // upgrade cards taken within a level before it ends
 // The run loops forever: level 1 -> 2 -> 3 -> 1 -> 2 -> 3 ... Every time it wraps back to level 1 a
 // new, harder cycle begins. Enemies gain a flat HP bump and a flat speed bump per cycle
 // (cycle 0 = base stats), so each pass through the same level is tougher than the last.
 const CYCLE_HP_STEP = 10;
 const CYCLE_SPEED_STEP = 0.05;
-// Kills per upgrade card. The first cycle uses KILLS_PER_CARD_FIRST_CYCLE (buffs.js).
-// Every cycle after that asks for more, so cards (and the buffs and level wraps they
-// drive) come slower once the enemies turn tanky. SpawnModel.java mirrors both names.
-const KILLS_PER_CARD_LATER = 20;
-function killsPerCard() { return cycle === 0 ? KILLS_PER_CARD_FIRST_CYCLE : KILLS_PER_CARD_LATER; }
+// Card pacing (XP per card, cards per level) lives in progression.js, which
+// SpawnModel.java mirrors. The next card's cost depends only on the run total taken.
+function xpForNextCard() { return xpForCard(buffsAwarded + 1); }
 
 // Which level is active (1 = grass/knights, 2 = cave/trolls, 3 = sewer/necromancers),
 // how many full loops have been completed, and the buff count when the level began (so
@@ -489,7 +492,7 @@ function killsPerCard() { return cycle === 0 ? KILLS_PER_CARD_FIRST_CYCLE : KILL
 let level = 1;
 let cycle = 0;
 let levelCardBaseline = 0;
-let killCardBaseline = 0;      // kills the last upgrade card was awarded at (for pacing)
+let cardXp = 0;                // weighted card progress: tier 1/2/3 kills give 1/2/3 XP
 
 // A fresh idle player on the center tile. Used at module init, run start, and on
 // entering a level.
@@ -955,7 +958,7 @@ function releasePendingShot(now) {
 // Omni-Shot: once taken, an automatic 8-direction volley fires on its own timer,
 // independent of manual shooting. Higher levels fire it faster. The arrows are ordinary
 // arrows, so they scale with damage, piercing and distance cards (never with fire rate).
-const OMNI_INTERVAL_MS = [0, 8000, 7000, 6000]; // milliseconds between volleys, indexed by omniLevel
+const OMNI_INTERVAL_MS = [0, 8000, 7000, 5000]; // milliseconds between volleys, indexed by omniLevel
 
 function maybeFireOmni(now) {
   if (omniLevel <= 0) return;
@@ -993,7 +996,7 @@ const INVIS_MAX_BONUS_SEC = 3;
 const BURST_MAX_BONUS_TILES = 3;
 function invisDurationMs() { return INVIS_DURATION_MS + Math.min(INVIS_MAX_BONUS_SEC, invisBonusSec) * 1000; }
 function burstRangeTiles() { return BURST_RANGE_TILES + Math.min(BURST_MAX_BONUS_TILES, burstBonusTiles); }
-function arrowStormCharges() { return Math.min(3, Math.max(1, burstBonusTiles)); }
+function arrowStormCharges() { return Math.min(3, 1 + burstBonusTiles); } // every copy adds a charge, capped at 3
 function stormReadyCharges() { return arrowStormCharges() - stormQueue.charging; }
 function ballistaSlots() { return Math.min(MAX_BALLISTAS, 1 + ballistaBonus); }
 function ballistaCooldownMs() { return ballistaFastCd ? BALLISTA_FAST_COOLDOWN_MS : BALLISTA_COOLDOWN_MS; }
@@ -1057,7 +1060,14 @@ function isFreeForBallista(x, y) {
   if (x < 0 || x >= MAP_COLS || y < 0 || y >= MAP_ROWS) return false;
   if (cellSolid(x, y)) return false;
   for (const b of ballistas) if (b.x === x && b.y === y) return false;
-  return true;
+  // The tile must also be routable from the player's tile, or the turret lands in a
+  // sealed pocket where enemies can never attack it and every enemy that targets it
+  // stalls on a field with no route. The player always stands on the walkable
+  // network, so a finite distance to them means grounded enemies can reach the tile.
+  // ballistaFieldAt caches the field, and a real deploy clears the cache anyway.
+  const pt = playerTile();
+  if (x === pt.x && y === pt.y) return true; // the player's own tile is trivially routable
+  return ballistaFieldAt(x, y)[pt.y * MAP_COLS + pt.x] >= 0;
 }
 // The player's tile if free, otherwise the nearest free tile spiralling outward.
 function findBallistaTile(t) {
@@ -1078,8 +1088,8 @@ function findBallistaTile(t) {
   return null;
 }
 
-// Green ranger: one arrow to every living enemy within range it can see, for the ranger's
-// current damage. A single bow twang plays for the whole volley.
+// Green ranger: one arrow to every living enemy within range it can see, at double the
+// ranger's current damage. A single bow twang plays for the whole volley.
 function activateArrowBurst(now) {
   if (stormReadyCharges() <= 0) return;
   joinQueue(stormQueue, now, ARROW_STORM_COOLDOWN_MS); // this charge starts recharging
@@ -1095,7 +1105,7 @@ function activateArrowBurst(now) {
     const ang = Math.atan2(c.y - py, c.x - px);
     // A visual-only arrow (skipped by resolveCollisions) plus a direct, guaranteed hit.
     state.projectiles.push(makeArrow(px, py, ang, now, { visual: true }));
-    damageEnemy(enemy, now);
+    damageEnemy(enemy, now, playerDamage * 2);
   }
   stormKillInProgress = false;
   playSfx("bow", 10);
@@ -1267,11 +1277,11 @@ function goalFlowField(goalX, goalY) {
 function maxEnemies() { return MAX_ENEMIES_BASE + MAX_ENEMIES_PER_CYCLE * cycle; }
 // Clamped only by the performance cap, so difficulty climbs forever with progress.
 function targetEnemyCount() {
-  return Math.min(maxEnemies(), SPAWN_TARGET_START + SPAWN_TARGET_PER_CARD * buffsAwarded);
+  return Math.min(maxEnemies(), SPAWN_TARGET_START + SPAWN_TARGET_PER_CARD * spawnCards(buffsAwarded));
 }
 // The shrinking cadence is what lets the board reach the high late-game targets.
 function spawnIntervalMs() {
-  return Math.max(SPAWN_INTERVAL_FLOOR, SPAWN_INTERVAL_BASE - SPAWN_INTERVAL_PER_CARD * buffsAwarded);
+  return Math.max(SPAWN_INTERVAL_FLOOR, SPAWN_INTERVAL_BASE - SPAWN_INTERVAL_PER_CARD * spawnCards(buffsAwarded));
 }
 
 // Single source for the enemy shape. Fort spawns and necromancer summons both build
@@ -1334,7 +1344,7 @@ function maybeSpawnEnemy(now) {
   const deficit = targetEnemyCount() - forted;
   if (deficit <= 0) return;
   // Spawn only on this level's points that no enemy occupies (never stack on a tile).
-  // Also skip the player's tile: level 2 portals and level 3 grates are walkable, and an
+  // Also skip the player's tile. Level 2 portals and level 3 grates are walkable, and an
   // enemy must not materialize inside a player camping one.
   const pt = playerTile();
   const openForts = levelSpawns().filter((s) => !isEnemyAt(s.x, s.y) && !(s.x === pt.x && s.y === pt.y));
@@ -1342,7 +1352,7 @@ function maybeSpawnEnemy(now) {
   // Top up toward the target. The batch grows with cards (capped by the fort count anyway)
   // so a new level refills toward its high target quickly instead of easing in each time.
   // Shuffle so the batch uses distinct forts.
-  const batch = 1 + Math.floor(buffsAwarded / 2);
+  const batch = 1 + Math.floor(spawnCards(buffsAwarded) / 2);
   const count = Math.min(deficit, room, openForts.length, batch);
   shuffleInPlace(openForts);
   for (let n = 0; n < count; n++) spawnEnemyAt(openForts[n], now);
@@ -1417,7 +1427,13 @@ function stepEnemies(now) {
     if (floats) stepField = tgt.isBallista ? ballistaFloatFieldAt(tgt.x, tgt.y) : goalFlowFieldFloat(goalX, goalY);
     else stepField = tgt.isBallista ? ballistaFieldAt(tgt.x, tgt.y) : field;
     const solidTest = floats ? floaterSolid : cellSolid;
-    const next = nextStepFromField(stepField, enemy.x, enemy.y, solidTest);
+    let next = nextStepFromField(stepField, enemy.x, enemy.y, solidTest);
+    // A turret target with no route (it should never happen now that placement checks
+    // reachability, but a map edit could reintroduce it) must not strand the enemy.
+    // Fall back to chasing the player instead of standing still.
+    if (next === null && tgt.isBallista) {
+      next = nextStepFromField(floats ? goalFlowFieldFloat(goalX, goalY) : field, enemy.x, enemy.y, solidTest);
+    }
     if (next === null) continue;
     enemy.fromX = enemy.x;
     enemy.fromY = enemy.y;
@@ -1518,7 +1534,8 @@ function damageEnemy(enemy, now, dmg = playerDamage) {
     enemy.deathStart = now;
     enemy.moving = false;
     if (ALL_TYPES[enemy.type].kind !== "skeleton") {
-      state.kills++; // only real enemies score
+      state.kills++; // only real enemies score, and every kill counts once here
+      cardXp += CARD_XP_BY_TYPE[enemy.type] || 1; // card progress is tier-weighted
       // Each scoring kill charges the active ranger's ultimate 0.5s faster: invisibility only
       // while not vanished, arrow storm never from its own volley, the ballista stays fixed.
       if (selectedRanger === 0 && now >= invisUntil) ultReadyAt = Math.max(now, ultReadyAt - ULT_KILL_REDUCTION_MS);
@@ -1820,7 +1837,11 @@ function stepNecro(enemy, now, goalX, goalY) {
   }
   // Otherwise close the distance to attack range (grounded pathing toward the chosen target).
   const nextField = tgt.isBallista ? ballistaFieldAt(tgt.x, tgt.y) : goalFlowField(goalX, goalY);
-  const next = nextStepFromField(nextField, enemy.x, enemy.y, cellSolid);
+  let next = nextStepFromField(nextField, enemy.x, enemy.y, cellSolid);
+  // Same fallback as stepEnemies, an unroutable turret target must not strand the caster.
+  if (next === null && tgt.isBallista) {
+    next = nextStepFromField(goalFlowField(goalX, goalY), enemy.x, enemy.y, cellSolid);
+  }
   if (next === null) return;
   enemy.fromX = enemy.x; enemy.fromY = enemy.y; enemy.toX = next.x; enemy.toY = next.y;
   if (next.x > enemy.x) enemy.facing = "right"; else if (next.x < enemy.x) enemy.facing = "left";
@@ -2204,9 +2225,9 @@ function renderTransition(now) {
 function loop(now) {
   if (!state.running || state.paused || state.choosingBuff) return;
   if (state.transitioning) { renderTransition(now); requestAnimationFrame(loop); return; }
-  // A level ends once CARDS_PER_LEVEL cards have been taken in it. Fade into the next one
+  // A level ends once its card budget (progression.js) has been taken. Fade into the next one
   // (which loops back to level 1 forever, each wrap a harder cycle).
-  if (!state.player.dying && levelCards() >= CARDS_PER_LEVEL) {
+  if (!state.player.dying && levelCards() >= cardsForLevel(cycle, level)) {
     startLevelTransition(now);
     requestAnimationFrame(loop);
     return;
@@ -2232,11 +2253,11 @@ function loop(now) {
       stepEnemyProjectiles(now);
       render(now);
       updateHud(now, state);
-      updateProgress((state.kills - killCardBaseline) / killsPerCard(), ultimateCircles(now));
+      updateProgress(cardXp / xpForNextCard(), ultimateCircles(now));
       // Guard on dying like the level-transition check above, or a kill and a death
       // in the same frame open the card screen over the death animation.
-      if (!state.player.dying && state.kills - killCardBaseline >= killsPerCard()) {
-        killCardBaseline = state.kills;
+      if (!state.player.dying && cardXp >= xpForNextCard()) {
+        cardXp -= xpForNextCard(); // overflow XP carries into the next card
         startBuffSelection(now, buffGame);
       }
     }
@@ -2281,7 +2302,7 @@ function resetState() {
   state.transitioning = false;
   transition = null;
   state.kills = 0;
-  killCardBaseline = 0;
+  cardXp = 0;
   state.maxLives = ranger.hearts;
   state.lives = ranger.hearts;
   state.choosingBuff = false;

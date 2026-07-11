@@ -3,6 +3,7 @@ package com.recurve;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.recurve.service.GameSessionService;
 import com.recurve.service.ProfanityFilter;
+import com.recurve.service.SpawnModel;
 import com.recurve.service.ClientRateLimiter;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -265,5 +266,27 @@ class ScoreControllerTest {
         // PageRequest, which would throw on a non-positive page size.
         mockMvc.perform(get("/api/scores/top?limit=100000")).andExpect(status().isOk());
         mockMvc.perform(get("/api/scores/top?limit=-5")).andExpect(status().isOk());
+    }
+
+    @Test
+    void killsAtTheSpawnBoundPass() throws Exception {
+        // Pins the controller's exact contract, the bound is computed on duration + 1
+        // (the client floors durationSeconds) plus the 40-kill slack.
+        int duration = 130;
+        int kills = (int) SpawnModel.maxKills(duration + 1) + 40;
+        mockMvc.perform(post("/api/scores")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json("edge", kills, duration)))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void killsJustOverTheSpawnBoundAreRejected() throws Exception {
+        int duration = 130;
+        int kills = (int) SpawnModel.maxKills(duration + 1) + 40 + 1;
+        mockMvc.perform(post("/api/scores")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json("edge", kills, duration)))
+                .andExpect(status().isBadRequest());
     }
 }

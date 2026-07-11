@@ -32,65 +32,78 @@ export let buffsAwarded = 0;
 // Ranger-specific ultimate upgrades (only offered to the matching ranger).
 export let invisBonusSec = 0;      // gray: extra seconds of invisibility (cap 3)
 export let ballistaBonus = 0;      // crossbow: extra ballista slots (cap 2, so 3 total)
-export let ballistaFastCd = false; // crossbow: turret cooldown lowered to 20s
+export let ballistaFastCd = false; // crossbow: turret cooldown lowered to 5s
 export let burstBonusTiles = 0;    // green: extra tiles of arrow-burst range (cap 3)
 
 // ---------------------------------------------------------------------------
-// Upgrade cards: every KILLS_PER_CARD_FIRST_CYCLE kills through the first cycle,
-// pause and offer 3 random buffs. Later cycles pace by KILLS_PER_CARD_LATER in
-// game.js, and SpawnModel.java mirrors both names.
+// Upgrade cards. When the run's card XP crosses the next threshold, pause and
+// offer 3 random buffs. The track lives in progression.js, is mirrored by
+// SpawnModel.java, and tier-n kills give n XP.
 // ---------------------------------------------------------------------------
-export const KILLS_PER_CARD_FIRST_CYCLE = 10;
-const STACK_CAP = 10;           // max copies of a stacking buff
 const buffOverlay = document.getElementById("buff-overlay");
 const buffCardsEl = document.getElementById("buff-cards");
 const buffSubmitBtn = document.getElementById("buff-submit");
 let buffPausedAt = 0;
 
 // Only the title is shown, so the exact numbers stay hidden. Stacking buffs carry
-// a tally of how many you already hold (drawn as dots on the card). The special-rule
-// cards (Heal to Full and Multi-Shot) don't stack and show no tally.
-// Cards that touch lives take the shared state object as `s`.
+// a tally of how many you already hold (drawn as dots on the card, one per copy up
+// to the cap). The special-rule cards (Heal to Full and Multi-Shot) don't stack and
+// show no tally. Cards that touch lives take the shared state object as `s`.
+// Tiered cards ramp per copy. The apply hook gets the card itself, and card.taken
+// (copies already held, before this one) indexes the tier.
 const BUFF_CARDS = [
-  { title: "Increase Life", stacking: true, available: () => true,
+  { title: "Increase Life", stacking: true, cap: 5, available: () => true,
     apply: (s) => { s.maxLives += 1; s.lives += 1; } },
   { title: "Heal to Full", available: (s) => s.lives < s.maxLives,
     apply: (s) => { s.lives = s.maxLives; } },
-  { title: "Increase Movement Speed", stacking: true, available: () => true,
-    apply: () => { playerSpeedMult += 0.25; } }, // additive: +25% of base each card
-  { title: "Increase Attack Speed", stacking: true, available: () => true,
-    apply: () => { fireRateMult += 0.5; } },      // additive: +50% of base each card
-  { title: "Increase Damage", stacking: true, available: () => true,
-    apply: () => { playerDamage += DEFAULT_DAMAGE; } },
-  { title: "Arrow Piercing", stacking: true, cap: 3, dots: 3, available: () => true,
+  { title: "Increase Movement Speed", stacking: true, cap: 5, available: () => true,
+    apply: () => { playerSpeedMult += 0.25; } }, // additive: +25% of base each copy
+  // Additive off base fire rate, ramping +50%, +50%, +100%, +100%, +200% (6x total).
+  { title: "Increase Attack Speed", stacking: true, cap: 5, available: () => true,
+    apply: (s, card) => { fireRateMult += [0.5, 0.5, 1, 1, 2][card.taken || 0]; } },
+  // Flat DEFAULT_DAMAGE multiples (never the ranger's own damage), ramping +2, +2, +4, +4, +8.
+  { title: "Increase Damage", stacking: true, cap: 5, available: () => true,
+    apply: (s, card) => { playerDamage += DEFAULT_DAMAGE * [1, 1, 2, 2, 4][card.taken || 0]; } },
+  { title: "Arrow Piercing", stacking: true, cap: 3, available: () => true,
     apply: () => { playerPierce += 1; } },
-  { title: "Arrow Distance", stacking: true, available: () => true,
-    apply: () => { playerArrowRange += 1; } },
+  // Tiles of extra range, ramping +1, +1, +2, +2, +4 (+10 total).
+  { title: "Arrow Distance", stacking: true, cap: 5, available: () => true,
+    apply: (s, card) => { playerArrowRange += [1, 1, 2, 2, 4][card.taken || 0]; } },
   { title: "Multi-Shot", available: () => !playerMultiShot, // one-time
     apply: () => { playerMultiShot = true; } },
-  // Omni-Shot: unlocked by Multi-Shot, stacks to 3 (shown as 3 dots). Each level makes the
-  // automatic 8-direction volley fire faster (the omni timer lives in game.js).
-  { title: "Omni-Shot", stacking: true, cap: 3, dots: 3, available: () => playerMultiShot,
+  // Omni-Shot: unlocked by Multi-Shot, stacks to 3. Each level makes the automatic
+  // 8-direction volley fire faster (the omni timer lives in game.js).
+  { title: "Omni-Shot", stacking: true, cap: 3, available: () => playerMultiShot,
     apply: () => { omniLevel += 1; } },
   // --- Ranger-specific ultimate upgrades. `ranger` restricts the card to one ranger index
   // (0 = gray/invisibility, 1 = crossbow/ballista, 2 = green/arrow-burst). ---
-  { title: "Invisibility", stacking: true, cap: 3, dots: 3, ranger: 0, available: () => true,
+  { title: "Invisibility", stacking: true, cap: 3, ranger: 0, available: () => true,
     apply: () => { invisBonusSec += 1; } },
-  { title: "Ballista", stacking: true, cap: 2, dots: 2, ranger: 1, available: () => true,
+  { title: "Ballista", stacking: true, cap: 2, ranger: 1, available: () => true,
     apply: () => { ballistaBonus += 1; } },
-  // Unlocked only once both Extra Ballista cards are taken; drops the cooldown to 20s.
+  // Unlocked only once both Extra Ballista cards are taken; drops the cooldown to 5s.
   { title: "Ballista Cooldown", ranger: 1, available: () => ballistaBonus >= 2 && !ballistaFastCd,
     apply: () => { ballistaFastCd = true; } },
-  { title: "Arrow Storm", stacking: true, cap: 3, dots: 3, ranger: 2, available: () => true,
+  { title: "Arrow Storm", stacking: true, cap: 3, ranger: 2, available: () => true,
     apply: () => { burstBonusTiles += 1; } },
 ];
+
+// Accent borders (styles.css). Ultimate (ranger) cards always carry their ranger's
+// color, and the final copy of any other stacking card goes gold. Everything else
+// stays plain.
+const ULT_CLASSES = [" ult-blue", " ult-red", " ult-green"]; // by ranger index
+function cardAccentClass(card) {
+  if (card.ranger !== undefined) return ULT_CLASSES[card.ranger];
+  if (card.stacking && (card.taken || 0) === card.cap - 1) return " gold";
+  return "";
+}
 
 function pickBuffCards(n, s, ranger) {
   // Stacking buffs drop out of the pool once they reach their cap. Ranger-specific cards only
   // show for the matching ranger.
   const pool = BUFF_CARDS.filter((c) =>
     (c.ranger === undefined || c.ranger === ranger) &&
-    c.available(s) && !(c.stacking && (c.taken || 0) >= (c.cap || STACK_CAP)));
+    c.available(s) && !(c.stacking && (c.taken || 0) >= c.cap));
   // Heal to Full is a bonus, never filler. Once every other upgrade is taken or maxed,
   // drop it so a fully upgraded run stops getting card screens (and heals) and can reach
   // its end, instead of being offered a free heal every threshold forever.
@@ -108,7 +121,7 @@ let activeGame = null;   // the game handle for the current selection screen
 
 // `game` is the handle game.js passes in: { state, shiftTimers, resume }. Buff
 // selection pauses the run, so it needs those three hooks. Held input is left alone
-// on purpose, so fire or movement held across the card screen resumes seamlessly.
+// on purpose, so fire or movement held across the card screen picks right back up.
 export function startBuffSelection(now, game) {
   buffsAwarded += 1; // count the award (advances the next threshold) even if nothing is offered
   const cards = pickBuffCards(3, game.state, game.ranger);
@@ -123,13 +136,12 @@ export function startBuffSelection(now, game) {
   cards.forEach((card, slot) => {
     const el = document.createElement("button");
     el.type = "button";
-    el.className = "buff-card";
-    // Stacking buffs show a row of circles (STACK_CAP, or the card's own cap), filled by
+    el.className = "buff-card" + cardAccentClass(card);
+    // Stacking buffs show a row of circles (one per copy up to the cap), filled by
     // how many copies you hold.
-    const dotCount = card.dots || STACK_CAP;
     const dots = card.stacking
       ? `<span class="buff-dots">` +
-        Array.from({ length: dotCount }, (_, i) =>
+        Array.from({ length: card.cap }, (_, i) =>
           `<span class="buff-dot${i < (card.taken || 0) ? " full" : ""}"></span>`).join("") +
         `</span>`
       : "";
@@ -173,7 +185,7 @@ function chooseBuff(card, game) {
   selectedCard = null;
   activeGame = null;
   buffSubmitBtn.disabled = true;
-  card.apply(game.state);
+  card.apply(game.state, card); // tiered cards read card.taken for their ramp
   card.taken = (card.taken || 0) + 1;
   buffOverlay.classList.add("hidden");
   game.state.choosingBuff = false;
@@ -203,11 +215,10 @@ export function resetRunStats(ranger) {
 // kitted out. buffsAwarded is bumped so all enemy tiers unlock immediately. Called from
 // start() when GOD_MODE is on, after resetRunStats.
 export function applyMaxBuffs(state) {
-  const STACK = STACK_CAP; // 10
-  playerDamage += DEFAULT_DAMAGE * STACK;
-  playerSpeedMult += 0.25 * STACK;
-  fireRateMult += 0.5 * STACK;
-  playerArrowRange += STACK;
+  playerDamage += DEFAULT_DAMAGE * 10; // tier sum: 1+1+2+2+4 copies of the default
+  playerSpeedMult += 0.25 * 5;
+  fireRateMult += 5;                   // tier sum: 0.5+0.5+1+1+2
+  playerArrowRange += 10;              // tier sum: 1+1+2+2+4
   playerPierce = 3;      // Arrow Piercing cap
   playerMultiShot = true;
   omniLevel = 3;         // Omni-Shot cap
@@ -216,7 +227,7 @@ export function applyMaxBuffs(state) {
   ballistaBonus = 2;
   ballistaFastCd = true;
   burstBonusTiles = 3;
-  state.maxLives += STACK;
+  state.maxLives += 5;   // Increase Life cap
   state.lives = state.maxLives;
-  for (const c of BUFF_CARDS) c.taken = c.cap || STACK; // show as maxed, drop them from the pool
+  for (const c of BUFF_CARDS) c.taken = c.cap || 1; // show as maxed, drop them from the pool
 }

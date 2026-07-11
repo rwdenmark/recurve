@@ -39,7 +39,7 @@ export function resetQueue(queue) {
 }
 
 /**
- * HUD dials for the queue: one full circle per ready charge, a partial one for the
+ * HUD dials for the queue, one full circle per ready charge, a partial one for the
  * recharging head, and an empty one for each charge waiting behind it. Callers pad
  * or trim to their own slot count (the ballista adds empties for deployed turrets).
  */

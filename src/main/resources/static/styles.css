@@ -500,13 +500,14 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  transform: scale(1.5);
-  transform-origin: center;
+  /* Sized directly instead of transform: scale(1.5). The transform rasterized the
+     whole column through GPU layers, which Chrome could composite as a black box
+     behind the Confirm button, and direct sizing also renders the text crisper. */
 }
 
 .buff-cards {
   display: flex;
-  gap: 14px;
+  gap: 21px;
 }
 
 .buff-card {
@@ -515,14 +516,15 @@ body {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  width: 130px;
-  min-height: 132px;
-  padding: 16px 12px;
+  width: 195px;
+  min-height: 198px;
+  padding: 24px 18px;
   background: #1d1f25;
-  border: 2px solid #2c2e34;
-  border-radius: 8px;
+  border: 3px solid #2c2e34;
+  border-radius: 12px;
   color: var(--text);
   font: inherit;
+  font-size: 21px;
   cursor: pointer;
   text-align: center;
 }
@@ -536,36 +538,84 @@ body {
   background: #23262d;
 }
 
+/* Accent borders on special cards, each fading inward from the border toward the
+   center. Gold marks the final copy of a stacking card. Ultimate (ranger) cards
+   always carry their ranger's color, blue invisibility, red ballista, green storm.
+   Selection brightens the card's own color rather than switching to the accent. */
+.buff-card.gold {
+  border-color: #c9962e;
+  box-shadow: inset 0 0 39px 3px rgba(245, 185, 66, 0.3);
+}
+.buff-card.gold:hover { border-color: #e8b84b; background: #23262d; }
+.buff-card.gold.selected {
+  border-color: #ffe9a8;
+  background: #262a31;
+  box-shadow: inset 0 0 45px 4px rgba(245, 185, 66, 0.42);
+}
+.buff-card.ult-blue {
+  border-color: #3f7fd6;
+  box-shadow: inset 0 0 39px 3px rgba(90, 160, 255, 0.3);
+}
+.buff-card.ult-blue:hover { border-color: #6aa2e8; background: #23262d; }
+.buff-card.ult-blue.selected {
+  border-color: #cfe2ff;
+  background: #262a31;
+  box-shadow: inset 0 0 45px 4px rgba(90, 160, 255, 0.42);
+}
+.buff-card.ult-red {
+  border-color: #c74a3d;
+  box-shadow: inset 0 0 39px 3px rgba(235, 100, 85, 0.3);
+}
+.buff-card.ult-red:hover { border-color: #e07063; background: #23262d; }
+.buff-card.ult-red.selected {
+  border-color: #ffd9d4;
+  background: #262a31;
+  box-shadow: inset 0 0 45px 4px rgba(235, 100, 85, 0.42);
+}
+.buff-card.ult-green {
+  border-color: #3f9e4f;
+  box-shadow: inset 0 0 39px 3px rgba(95, 205, 115, 0.3);
+}
+.buff-card.ult-green:hover { border-color: #63bd72; background: #23262d; }
+.buff-card.ult-green.selected {
+  border-color: #d6f5db;
+  background: #262a31;
+  box-shadow: inset 0 0 45px 4px rgba(95, 205, 115, 0.42);
+}
+
 /* Hotkey badge, bottom-left of each card, matching the bottom bar's key-cap look. */
 .buff-key {
   position: absolute;
-  left: 8px;
-  bottom: 8px;
-  border: 1px solid var(--accent);
+  left: 12px;
+  bottom: 12px;
+  border: 1.5px solid var(--accent);
   color: var(--accent);
-  border-radius: 3px;
-  padding: 2px 6px;
-  font-size: 11px;
+  border-radius: 4px;
+  padding: 3px 9px;
+  font-size: 16px;
   line-height: 1;
 }
 
 /* Confirm button for the mouse flow. The 1/2/3 hotkeys bypass it. */
 .buff-submit {
-  margin-top: 16px;
+  margin-top: 24px;
   background: var(--accent);
   color: #1a1408;
   border: none;
-  padding: 10px 28px;
+  padding: 15px 42px;
   font: inherit;
+  font-size: 21px;
   font-weight: bold;
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: 6px;
 }
-.buff-submit:hover:not(:disabled) { filter: brightness(1.1); }
-.buff-submit:disabled { opacity: 0.35; cursor: default; }
+/* Solid colors instead of filter/opacity. Those force extra GPU layers inside the
+   scaled card column, which Chrome can composite as a black box behind the button. */
+.buff-submit:hover:not(:disabled) { background: #ffcb58; }
+.buff-submit:disabled { background: #6e5c26; color: #3a3114; cursor: default; }
 
 .buff-title {
-  font-size: 15px;
+  font-size: 22px;
   font-weight: bold;
   color: var(--accent);
 }
@@ -573,19 +623,19 @@ body {
 /* Tally of copies held (filled) out of the cap (outlines), pinned to the card top. */
 .buff-dots {
   position: absolute;
-  top: 8px;
-  left: 6px;
-  right: 6px;
+  top: 12px;
+  left: 9px;
+  right: 9px;
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: 3px;
+  gap: 5px;
 }
 .buff-dot {
-  width: 7px;
-  height: 7px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
-  border: 1px solid var(--accent);
+  border: 1.5px solid var(--accent);
 }
 .buff-dot.full {
   background: var(--accent);

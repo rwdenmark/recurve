@@ -60,7 +60,7 @@ test("pause shift moves the head, an empty queue stays at 0", () => {
   assert.equal(q.chargeEnd, CD + 5000);
 });
 
-test("circles: full for ready, partial head, empty for the rest of the queue", () => {
+test("circles show full for ready, a partial head, empty for the rest of the queue", () => {
   const q = createChargeQueue();
   joinQueue(q, 0, CD);
   joinQueue(q, 0, CD);

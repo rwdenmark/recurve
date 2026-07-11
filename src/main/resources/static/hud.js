@@ -51,7 +51,7 @@ export function updateHud(now, state) {
 let lastXpPct = -1;
 let lastUltSig = "";
 
-// XP bar (kills toward the next upgrade card) plus the ultimate cooldown dial(s). `circles` is
+// XP bar (tier-weighted kill XP toward the next upgrade card) plus the ultimate cooldown dial(s). `circles` is
 // an array of { fraction (0..1 clockwise fill), ready }; the crossbow ranger shows one dial per
 // turret slot, the other rangers show a single dial. Only touches the DOM when values change.
 export function updateProgress(cardFraction, circles) {
